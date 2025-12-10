@@ -1,0 +1,448 @@
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Table, Button, Space, Tag, Modal, Form, Input, Upload, message, Drawer, Tabs, Switch as AntSwitch } from 'antd'
+import { PlusOutlined, PlayCircleOutlined, EditOutlined, DeleteOutlined, UploadOutlined, CodeOutlined, EyeOutlined } from '@ant-design/icons'
+import api from '../api/axios'
+import dayjs from 'dayjs'
+import CodeEditor from '../components/CodeEditor'
+
+const { TabPane } = Tabs;
+
+const Tasks = () => {
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [viewDrawerVisible, setViewDrawerVisible] = useState(false)
+  const [currentTask, setCurrentTask] = useState<any>(null)
+  const [scriptContent, setScriptContent] = useState('')
+  const [scriptMode, setScriptMode] = useState<'write' | 'upload'>('write')
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    fetchTasks()
+  }, [])
+
+  const fetchTasks = async () => {
+    setLoading(true)
+    try {
+      const response = await api.get('/tasks')
+      setTasks(response.data)
+    } catch (error) {
+      message.error('获取任务列表失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreate = () => {
+    setCurrentTask(null)
+    form.resetFields()
+    setScriptContent('')
+    setScriptMode('write')
+    setDrawerVisible(true)
+  }
+
+  const handleEdit = async (record: any) => {
+    setCurrentTask(record)
+    form.setFieldsValue({
+      name: record.name,
+      description: record.description,
+      cron_expression: record.cron_expression,
+      is_active: record.is_active
+    })
+    
+    // 加载脚本内容
+    if (record.script_path) {
+      try {
+        const response = await api.get(`/tasks/${record.id}/script`)
+        setScriptContent(response.data.content)
+        setScriptMode('write')
+      } catch (error) {
+        message.error('加载脚本内容失败')
+        setScriptContent('')
+      }
+    } else {
+      setScriptContent('')
+    }
+    
+    setDrawerVisible(true)
+  }
+
+  const handleView = async (record: any) => {
+    setCurrentTask(record)
+    
+    // 加载脚本内容
+    if (record.script_path) {
+      try {
+        const response = await api.get(`/tasks/${record.id}/script`)
+        setScriptContent(response.data.content)
+        setViewDrawerVisible(true)
+      } catch (error) {
+        message.error('加载脚本内容失败')
+      }
+    } else {
+      message.warning('该任务还没有脚本')
+    }
+  }
+
+  const handleSubmit = async (values: any) => {
+    // 验证脚本内容
+    if (scriptMode === 'write' && !scriptContent.trim()) {
+      message.error('请编写脚本内容或上传脚本文件')
+      return
+    }
+
+    setSaving(true)
+    try {
+      let taskId = currentTask?.id
+
+      // 1. 创建或更新任务基本信息
+      if (currentTask) {
+        await api.put(`/tasks/${currentTask.id}`, values)
+        message.success('任务更新成功')
+      } else {
+        const response = await api.post('/tasks', values)
+        taskId = response.data.id
+        message.success('任务创建成功')
+      }
+
+      // 2. 保存脚本内容
+      if (scriptMode === 'write' && scriptContent.trim()) {
+        await api.post(`/tasks/${taskId}/script`, {
+          content: scriptContent
+        })
+        message.success('脚本保存成功')
+      }
+
+      setDrawerVisible(false)
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleUpload = async (options: any) => {
+    const { file, onSuccess, onError } = options
+
+    try {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const content = e.target?.result as string
+        setScriptContent(content)
+        setScriptMode('write')
+        message.success('文件读取成功，请点击保存')
+      }
+      reader.readAsText(file)
+      onSuccess()
+    } catch (error: any) {
+      message.error('文件读取失败')
+      onError(error)
+    }
+  }
+
+  const handleExecute = async (id: number) => {
+    try {
+      await api.post(`/tasks/${id}/execute`)
+      message.success('任务已提交执行')
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '执行失败')
+    }
+  }
+
+  const handleDelete = (id: number) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除这个任务吗？',
+      onOk: async () => {
+        try {
+          await api.delete(`/tasks/${id}`)
+          message.success('删除成功')
+          fetchTasks()
+        } catch (error: any) {
+          message.error(error.response?.data?.detail || '删除失败')
+        }
+      }
+    })
+  }
+
+  const handleToggleActive = async (id: number, isActive: boolean) => {
+    try {
+      await api.put(`/tasks/${id}`, { is_active: !isActive })
+      message.success(isActive ? '已禁用' : '已启用')
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败')
+    }
+  }
+
+  const statusColors: any = {
+    pending: 'default',
+    running: 'processing',
+    success: 'success',
+    failed: 'error',
+    paused: 'warning',
+  }
+
+  const statusText: any = {
+    pending: '待执行',
+    running: '运行中',
+    success: '成功',
+    failed: '失败',
+    paused: '已暂停',
+  }
+
+  const columns = [
+    { title: '任务名称', dataIndex: 'name', key: 'name' },
+    { title: 'Cron表达式', dataIndex: 'cron_expression', key: 'cron_expression' },
+    { 
+      title: '状态', 
+      dataIndex: 'status', 
+      key: 'status',
+      render: (status: string) => (
+        <Tag color={statusColors[status]}>{statusText[status] || status}</Tag>
+      )
+    },
+    { 
+      title: '是否启用', 
+      dataIndex: 'is_active', 
+      key: 'is_active',
+      render: (active: boolean, record: any) => (
+        <AntSwitch
+          checked={active}
+          onChange={() => handleToggleActive(record.id, active)}
+          checkedChildren="启用"
+          unCheckedChildren="禁用"
+        />
+      )
+    },
+    { 
+      title: '脚本状态',
+      dataIndex: 'script_path',
+      key: 'script_path',
+      render: (path: string) => (
+        <Tag color={path ? 'success' : 'warning'}>
+          {path ? '已上传' : '未上传'}
+        </Tag>
+      )
+    },
+    { 
+      title: '最后运行', 
+      dataIndex: 'last_run_at', 
+      key: 'last_run_at',
+      render: (time: string) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '-'
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: any) => (
+        <Space>
+          <Button 
+            type="link" 
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleExecute(record.id)}
+            disabled={!record.script_path}
+          >
+            执行
+          </Button>
+          <Button 
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => handleView(record)}
+            disabled={!record.script_path}
+          >
+            查看脚本
+          </Button>
+          <Button 
+            type="link" 
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record)}
+          >
+            编辑
+          </Button>
+          <Button 
+            type="link" 
+            onClick={() => navigate(`/tasks/${record.id}`)}
+          >
+            详情
+          </Button>
+          <Button 
+            type="link" 
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record.id)}
+          >
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+          创建任务
+        </Button>
+      </div>
+
+      <Table
+        dataSource={tasks}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+      />
+
+      {/* 创建/编辑任务Drawer */}
+      <Drawer
+        title={currentTask ? '编辑任务' : '创建任务'}
+        width={900}
+        open={drawerVisible}
+        onClose={() => setDrawerVisible(false)}
+        footer={
+          <div style={{ textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => setDrawerVisible(false)}>取消</Button>
+              <Button type="primary" loading={saving} onClick={() => form.submit()}>
+                保存
+              </Button>
+            </Space>
+          </div>
+        }
+      >
+        <Form form={form} onFinish={handleSubmit} layout="vertical">
+          <Form.Item
+            name="name"
+            label="任务名称"
+            rules={[{ required: true, message: '请输入任务名称' }]}
+          >
+            <Input placeholder="例如：每日数据备份" />
+          </Form.Item>
+          
+          <Form.Item name="description" label="任务描述">
+            <Input.TextArea rows={2} placeholder="描述任务的功能和目的" />
+          </Form.Item>
+          
+          <Form.Item
+            name="cron_expression"
+            label="Cron表达式"
+            rules={[{ required: true, message: '请输入Cron表达式' }]}
+            extra="例如: 0 0 * * * (每天0点执行), */5 * * * * (每5分钟执行)"
+          >
+            <Input placeholder="0 0 * * *" />
+          </Form.Item>
+
+          <Form.Item
+            name="is_active"
+            label="是否启用"
+            valuePropName="checked"
+            initialValue={false}
+          >
+            <AntSwitch checkedChildren="启用" unCheckedChildren="禁用" />
+          </Form.Item>
+        </Form>
+
+        <div style={{ marginTop: 24 }}>
+          <Tabs activeKey={scriptMode} onChange={(key) => setScriptMode(key as any)}>
+            <TabPane tab={<span><CodeOutlined /> 编写脚本</span>} key="write">
+              <div style={{ marginBottom: 8 }}>
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<UploadOutlined />}
+                    onClick={() => {
+                      const input = document.createElement('input')
+                      input.type = 'file'
+                      input.accept = '.py'
+                      input.onchange = (e: any) => {
+                        const file = e.target.files[0]
+                        if (file) {
+                          handleUpload({ file, onSuccess: () => {}, onError: () => {} })
+                        }
+                      }
+                      input.click()
+                    }}
+                  >
+                    从文件导入
+                  </Button>
+                  <span style={{ color: '#999', fontSize: 12 }}>
+                    支持 .py 文件
+                  </span>
+                </Space>
+              </div>
+              <CodeEditor
+                value={scriptContent}
+                onChange={setScriptContent}
+                language="python"
+                height="400px"
+              />
+              {scriptContent.trim() && (
+                <div style={{ marginTop: 8, color: '#52c41a', fontSize: 12 }}>
+                  ✓ 脚本已就绪，共 {scriptContent.split('\n').length} 行
+                </div>
+              )}
+            </TabPane>
+            
+            <TabPane tab={<span><UploadOutlined /> 上传文件</span>} key="upload">
+              <Upload.Dragger
+                name="file"
+                accept=".py"
+                customRequest={handleUpload}
+                maxCount={1}
+                showUploadList={false}
+              >
+                <p className="ant-upload-drag-icon">
+                  <UploadOutlined style={{ fontSize: 48 }} />
+                </p>
+                <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
+                <p className="ant-upload-hint">
+                  仅支持 .py 文件，上传后可以在"编写脚本"标签中查看和编辑
+                </p>
+              </Upload.Dragger>
+            </TabPane>
+          </Tabs>
+        </div>
+      </Drawer>
+
+      {/* 查看脚本Drawer */}
+      <Drawer
+        title={`查看脚本 - ${currentTask?.name || ''}`}
+        width={800}
+        open={viewDrawerVisible}
+        onClose={() => setViewDrawerVisible(false)}
+        footer={
+          <div style={{ textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => setViewDrawerVisible(false)}>关闭</Button>
+              <Button 
+                type="primary" 
+                icon={<EditOutlined />}
+                onClick={() => {
+                  setViewDrawerVisible(false)
+                  handleEdit(currentTask)
+                }}
+              >
+                编辑脚本
+              </Button>
+            </Space>
+          </div>
+        }
+      >
+        <CodeEditor
+          value={scriptContent}
+          onChange={() => {}} // readOnly模式下不需要实际修改
+          language="python"
+          height="600px"
+          readOnly
+        />
+      </Drawer>
+    </div>
+  )
+}
+
+export default Tasks

@@ -1,0 +1,55 @@
+# Git
+.git
+.gitignore
+
+# Docker
+docker-compose.yml
+.dockerignore
+Dockerfile
+.env
+.env.example
+
+# 持久化数据
+volumes/
+logs/
+backups/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+build/
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 文档
+*.md
+docs/
+
+# 测试
+tests/
+test_*.py
+*_test.py
+
+# 临时文件
+*.log
+*.tmp

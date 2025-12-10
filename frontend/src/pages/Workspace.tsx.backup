@@ -1,0 +1,917 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Card, Button, Upload, message, Space, 
+  Breadcrumb, Input, Typography, List, Row, Col, Spin, Modal, Checkbox, Dropdown 
+} from 'antd';
+import type { MenuProps } from 'antd';
+import {
+  FolderOutlined, FileOutlined, UploadOutlined, 
+  PlayCircleOutlined, DeleteOutlined, PlusOutlined,
+  ReloadOutlined, DownloadOutlined, ClearOutlined,
+  FolderOpenOutlined, CodeOutlined, EditOutlined, FileAddOutlined,
+  CodeSandboxOutlined, MoreOutlined, FullscreenOutlined, FullscreenExitOutlined
+} from '@ant-design/icons';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import axios from '../api/axios';
+import dayjs from 'dayjs';
+import TerminalModal from '../components/TerminalModal';
+import CodeEditor from '../components/CodeEditor';
+import CsvViewer from '../components/CsvViewer';
+
+const { Text } = Typography;
+
+interface FileItem {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+  modified: string;
+  extension?: string;
+}
+
+const Workspace: React.FC = () => {
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [currentPath, setCurrentPath] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string>('');
+  const [createDirVisible, setCreateDirVisible] = useState(false);
+  const [newDirName, setNewDirName] = useState('');
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingFile, setEditingFile] = useState<{ path: string; name: string; content: string } | null>(null);
+  const [fileContent, setFileContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [terminalVisible, setTerminalVisible] = useState(false);
+  const [terminalScript, setTerminalScript] = useState<{ path: string; name: string } | null>(null);
+  const [renamingItem, setRenamingItem] = useState<{ path: string; name: string } | null>(null);
+  const [newName, setNewName] = useState('');
+  const [createFileVisible, setCreateFileVisible] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
+  const [consoleFullscreen, setConsoleFullscreen] = useState(false);
+  const consoleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadFiles();
+  }, [currentPath]);
+
+  useEffect(() => {
+    // 自动滚动到底部
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  }, [consoleOutput]);
+
+  const addConsoleLog = (text: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
+    const timestamp = dayjs().format('HH:mm:ss');
+    const colorMap = {
+      info: '#00ff00',
+      success: '#00ff00',
+      error: '#ff0000',
+      warning: '#ffff00'
+    };
+    setConsoleOutput(prev => [...prev, `[${timestamp}] ${text}`]);
+  };
+
+  const clearConsole = () => {
+    setConsoleOutput([]);
+    addConsoleLog('控制台已清空', 'info');
+  };
+
+  const loadFiles = async () => {
+    setLoading(true);
+    addConsoleLog(`加载目录: ${currentPath || '根目录'}`, 'info');
+    try {
+      const response = await axios.get('/workspace/files', {
+        params: { path: currentPath }
+      });
+      setFiles(response.data.items);
+      setSelectedItems([]); // 清空选择
+      addConsoleLog(`✓ 找到 ${response.data.items.length} 个项目`, 'success');
+    } catch (error: any) {
+      const errorMsg = '加载文件列表失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileClick = (record: FileItem) => {
+    if (record.type === 'directory') {
+      setCurrentPath(record.path);
+      addConsoleLog(`进入目录: ${record.name}`, 'info');
+    }
+  };
+
+  const handleBreadcrumbClick = (path: string) => {
+    setCurrentPath(path);
+    addConsoleLog(`返回: ${path || '根目录'}`, 'info');
+  };
+
+  const handleUpload = async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    addConsoleLog(`开始上传: ${file.name}`, 'info');
+    try {
+      await axios.post('/workspace/upload', formData, {
+        params: { path: currentPath },
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      message.success('文件上传成功');
+      addConsoleLog(`✓ 上传成功: ${file.name}`, 'success');
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '上传失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+    
+    return false;
+  };
+
+  const handleExecute = async (filePath: string, fileName: string) => {
+    setSelectedFile(filePath);
+    setExecuting(true);
+    
+    addConsoleLog('='.repeat(60), 'info');
+    addConsoleLog(`执行脚本: ${fileName}`, 'info');
+    addConsoleLog(`文件路径: ${filePath}`, 'info');
+    addConsoleLog('='.repeat(60), 'info');
+    addConsoleLog('正在执行...', 'warning');
+
+    try {
+      const response = await axios.post('/workspace/execute', null, {
+        params: { file_path: filePath }
+      });
+
+      const scriptDir = filePath.substring(0, filePath.lastIndexOf('/')) || '根目录';
+      
+      addConsoleLog('', 'info');
+      addConsoleLog(`执行用户: ${response.data.executed_by}`, 'info');
+      addConsoleLog(`执行时间: ${dayjs(response.data.executed_at).format('YYYY-MM-DD HH:mm:ss')}`, 'info');
+      addConsoleLog(`工作目录: ${scriptDir}`, 'info');
+      addConsoleLog(`返回码: ${response.data.returncode}`, 'info');
+      addConsoleLog(`状态: ${response.data.success ? '✓ 成功' : '✗ 失败'}`, response.data.success ? 'success' : 'error');
+      addConsoleLog('', 'info');
+      addConsoleLog('=== 标准输出 ===', 'info');
+      
+      if (response.data.stdout) {
+        response.data.stdout.split('\n').forEach((line: string) => {
+          addConsoleLog(line, 'info');
+        });
+      } else {
+        addConsoleLog('(无输出)', 'info');
+      }
+      
+      if (response.data.stderr) {
+        addConsoleLog('', 'info');
+        addConsoleLog('=== 错误输出 ===', 'warning');
+        response.data.stderr.split('\n').forEach((line: string) => {
+          addConsoleLog(line, 'error');
+        });
+      }
+      
+      addConsoleLog('', 'info');
+      addConsoleLog('='.repeat(60), 'info');
+      addConsoleLog('执行完成！', 'success');
+      addConsoleLog('提示: 如有文件生成，请点击刷新查看', 'info');
+      addConsoleLog('='.repeat(60), 'info');
+      
+      if (response.data.success) {
+        message.success('脚本执行成功！');
+        // 自动刷新文件列表
+        setTimeout(() => loadFiles(), 1000);
+      }
+    } catch (error: any) {
+      const errorMsg = '执行失败: ' + (error.response?.data?.detail || error.message);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+      message.error(errorMsg);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const handleToggleSelect = (filePath: string) => {
+    setSelectedItems(prev => {
+      if (prev.includes(filePath)) {
+        return prev.filter(p => p !== filePath);
+      } else {
+        return [...prev, filePath];
+      }
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedItems.length === files.length) {
+      setSelectedItems([]);
+    } else {
+      setSelectedItems(files.map(f => f.path));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedItems.length === 0) {
+      message.warning('请先选择要删除的文件');
+      return;
+    }
+
+    Modal.confirm({
+      title: '批量删除确认',
+      content: `确定要删除选中的 ${selectedItems.length} 个项目吗？`,
+      okText: '确定',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        addConsoleLog(`批量删除 ${selectedItems.length} 个项目`, 'warning');
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const filePath of selectedItems) {
+          try {
+            await axios.delete('/workspace/delete', {
+              params: { file_path: filePath }
+            });
+            successCount++;
+            addConsoleLog(`✓ 已删除: ${filePath}`, 'success');
+          } catch (error: any) {
+            failCount++;
+            addConsoleLog(`✗ 删除失败: ${filePath}`, 'error');
+          }
+        }
+
+        message.success(`删除完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+        setSelectedItems([]);
+        loadFiles();
+      }
+    });
+  };
+
+  const handleCreateDir = async () => {
+    if (!newDirName.trim()) {
+      message.error('请输入目录名称');
+      return;
+    }
+
+    const dirPath = currentPath ? `${currentPath}/${newDirName}` : newDirName;
+    addConsoleLog(`创建目录: ${newDirName}`, 'info');
+
+    try {
+      await axios.post('/workspace/mkdir', null, {
+        params: { dir_path: dirPath }
+      });
+      message.success('目录创建成功');
+      addConsoleLog(`✓ 目录已创建: ${newDirName}`, 'success');
+      setCreateDirVisible(false);
+      setNewDirName('');
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '创建目录失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+  const handleRename = async () => {
+    if (!renamingItem || !newName.trim()) {
+      message.error('请输入新名称');
+      return;
+    }
+
+    if (newName === renamingItem.name) {
+      setRenamingItem(null);
+      setNewName('');
+      return;
+    }
+
+    const oldPath = renamingItem.path;
+    const newPath = currentPath ? `${currentPath}/${newName}` : newName;
+    
+    addConsoleLog(`重命名: ${renamingItem.name} → ${newName}`, 'info');
+
+    try {
+      await axios.post('/workspace/rename', null, {
+        params: { 
+          old_path: oldPath,
+          new_path: newPath
+        }
+      });
+      message.success('重命名成功');
+      addConsoleLog(`✓ 已重命名: ${renamingItem.name} → ${newName}`, 'success');
+      setRenamingItem(null);
+      setNewName('');
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '重命名失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+  const downloadConsoleLog = () => {
+    const logContent = consoleOutput.join('\n');
+    const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `console_log_${dayjs().format('YYYYMMDDHHmmss')}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    addConsoleLog('✓ 日志已下载', 'success');
+  };
+
+  const downloadFile = async (filePath: string, fileName: string) => {
+    addConsoleLog(`下载文件: ${fileName}`, 'info');
+    try {
+      const response = await axios.get('/workspace/download', {
+        params: { file_path: filePath },
+        responseType: 'blob'
+      });
+      
+      const url = URL.createObjectURL(response.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      message.success('文件下载成功');
+      addConsoleLog(`✓ 已下载: ${fileName}`, 'success');
+    } catch (error: any) {
+      const errorMsg = '下载失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+  const handleEditFile = async (filePath: string, fileName: string) => {
+    addConsoleLog(`打开编辑: ${fileName}`, 'info');
+    try {
+      const response = await axios.get('/workspace/read', {
+        params: { file_path: filePath }
+      });
+      
+      setEditingFile({ path: filePath, name: fileName, content: response.data.content });
+      setFileContent(response.data.content);
+      setEditModalVisible(true);
+      addConsoleLog(`✓ 文件已加载`, 'success');
+    } catch (error: any) {
+      const errorMsg = '读取文件失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+  const handleSaveFile = async () => {
+    if (!editingFile) return;
+    
+    setSaving(true);
+    addConsoleLog(`保存文件: ${editingFile.name}`, 'info');
+    
+    try {
+      await axios.put('/workspace/update', {
+        file_path: editingFile.path,
+        content: fileContent
+      });
+      
+      message.success('文件保存成功');
+      addConsoleLog(`✓ 已保存: ${editingFile.name}`, 'success');
+      setEditModalVisible(false);
+      setEditingFile(null);
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '保存失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateNewFile = () => {
+    setNewFileName('new_script.py');
+    setCreateFileVisible(true);
+  };
+
+  const handleConfirmCreateFile = () => {
+    if (!newFileName.trim()) {
+      message.error('请输入文件名');
+      return;
+    }
+
+    // 确保文件名以.py结尾
+    let fileName = newFileName.trim();
+    if (!fileName.endsWith('.py')) {
+      fileName += '.py';
+    }
+
+    const filePath = currentPath ? `${currentPath}/${fileName}` : fileName;
+    const defaultContent = `#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+${fileName.replace('.py', '')}
+"""
+
+print("Hello, World!")
+`;
+    
+    setEditingFile({ path: filePath, name: fileName, content: defaultContent });
+    setFileContent(defaultContent);
+    setEditModalVisible(true);
+    setCreateFileVisible(false);
+    setNewFileName('');
+    addConsoleLog(`创建新文件: ${fileName}`, 'info');
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes === 0) return '-';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const getBreadcrumbs = () => {
+    if (!currentPath) return [{ path: '', name: '根目录' }];
+    
+    const parts = currentPath.split('/');
+    const breadcrumbs = [{ path: '', name: '根目录' }];
+    
+    let accumulated = '';
+    parts.forEach(part => {
+      accumulated = accumulated ? `${accumulated}/${part}` : part;
+      breadcrumbs.push({ path: accumulated, name: part });
+    });
+    
+    return breadcrumbs;
+  };
+
+  return (
+    <div style={{ height: 'calc(100vh - 120px)', position: 'relative' }}>
+      {/* 控制台全屏模式 */}
+      {consoleFullscreen ? (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 1000,
+          background: '#fff'
+        }}>
+          <Card
+            title={
+              <Space>
+                <FolderOpenOutlined />
+                <span>文件浏览器</span>
+              </Space>
+            }
+            extra={
+              <Space>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<FileAddOutlined />}
+                  onClick={handleCreateNewFile}
+                >
+                  新建文件
+                </Button>
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => setCreateDirVisible(true)}
+                >
+                  新建目录
+                </Button>
+                <Upload
+                  beforeUpload={handleUpload}
+                  showUploadList={false}
+                >
+                  <Button size="small" icon={<UploadOutlined />}>上传</Button>
+                </Upload>
+                <Button size="small" icon={<ReloadOutlined />} onClick={loadFiles}>
+                  刷新
+                </Button>
+              </Space>
+            }
+            style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+            bodyStyle={{ flex: 1, overflow: 'auto', padding: '16px' }}
+          >
+            <Space direction="vertical" style={{ width: '100%', marginBottom: 16 }}>
+              <Breadcrumb>
+                {getBreadcrumbs().map((item, index) => (
+                  <Breadcrumb.Item key={index}>
+                    <a onClick={() => handleBreadcrumbClick(item.path)}>
+                      {item.name}
+                    </a>
+                  </Breadcrumb.Item>
+                ))}
+              </Breadcrumb>
+              
+              {files.length > 0 && (
+                <Space>
+                  <Checkbox
+                    checked={selectedItems.length === files.length && files.length > 0}
+                    indeterminate={selectedItems.length > 0 && selectedItems.length < files.length}
+                    onChange={handleSelectAll}
+                  >
+                    全选
+                  </Checkbox>
+                  {selectedItems.length > 0 && (
+                    <Button
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={handleBatchDelete}
+                    >
+                      删除选中 ({selectedItems.length})
+                    </Button>
+                  )}
+                </Space>
+              )}
+            </Space>
+
+            <Spin spinning={loading}>
+              <List
+                dataSource={files}
+                renderItem={(item) => (
+                  <List.Item
+                    key={item.path}
+                    style={{
+                      padding: '12px',
+                      cursor: item.type === 'directory' ? 'pointer' : 'default',
+                      borderRadius: '4px',
+                      marginBottom: '4px',
+                      background: selectedFile === item.path ? '#e6f7ff' : 'transparent'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (item.type === 'directory') {
+                        e.currentTarget.style.background = '#f5f5f5';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (selectedFile !== item.path) {
+                        e.currentTarget.style.background = 'transparent';
+                      }
+                    }}
+                    onClick={() => item.type === 'directory' && handleFileClick(item)}
+                    actions={[
+                      item.type === 'file' && item.extension === '.py' && (
+                        <Button
+                          type="primary"
+                          size="small"
+                          icon={<PlayCircleOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleExecute(item.path, item.name);
+                          }}
+                          loading={executing && selectedFile === item.path}
+                        >
+                          执行
+                        </Button>
+                      ),
+                      item.type === 'file' && item.extension === '.py' && (
+                        <Button
+                          size="small"
+                          icon={<CodeSandboxOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            addConsoleLog('='.repeat(60), 'info');
+                            addConsoleLog(`启动交互式执行: ${item.name}`, 'info');
+                            addConsoleLog('提示: 交互式终端将在新窗口打开，所有输出会同步记录到日志', 'info');
+                            addConsoleLog('='.repeat(60), 'info');
+                            setTerminalScript({ path: item.path, name: item.name });
+                            setTerminalVisible(true);
+                          }}
+                        >
+                          交互式
+                        </Button>
+                      ),
+                      <Dropdown
+                        key="more"
+                        menu={{
+                          items: [
+                            item.type === 'file' && {
+                              key: 'edit',
+                              icon: <EditOutlined />,
+                              label: '编辑',
+                              onClick: () => handleEditFile(item.path, item.name)
+                            },
+                            item.type === 'file' && {
+                              key: 'download',
+                              icon: <DownloadOutlined />,
+                              label: '下载',
+                              onClick: () => downloadFile(item.path, item.name)
+                            },
+                            {
+                              key: 'rename',
+                              icon: <EditOutlined />,
+                              label: '重命名',
+                              onClick: () => {
+                                setRenamingItem({ path: item.path, name: item.name });
+                                setNewName(item.name);
+                              }
+                            }
+                          ].filter(Boolean) as MenuProps['items']
+                        }}
+                        trigger={['click']}
+                      >
+                        <Button
+                          size="small"
+                          icon={<MoreOutlined />}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          更多
+                        </Button>
+                      </Dropdown>
+                    ].filter(Boolean)}
+                  >
+                    <List.Item.Meta
+                      avatar={
+                        <Space>
+                          <Checkbox
+                            checked={selectedItems.includes(item.path)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleToggleSelect(item.path);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          {item.type === 'directory' ? (
+                            <FolderOutlined style={{ fontSize: 24, color: '#1890ff' }} />
+                          ) : (
+                            <FileOutlined style={{ fontSize: 24, color: item.extension === '.py' ? '#52c41a' : '#8c8c8c' }} />
+                          )}
+                        </Space>
+                      }
+                      title={
+                        <div onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          if (item.type === 'file') {
+                            handleEditFile(item.path, item.name);
+                          }
+                        }}>
+                          <Text strong={item.type === 'directory'}>{item.name}</Text>
+                        </div>
+                      }
+                      description={
+                        <Space size="large">
+                          <Text type="secondary">{formatSize(item.size)}</Text>
+                          <Text type="secondary">{dayjs(item.modified).format('YYYY-MM-DD HH:mm')}</Text>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </Spin>
+          </Card>
+        </Col>
+
+        {/* 右侧控制台 */}
+        <Col span={14} style={{ height: '100%' }}>
+          <Card
+            title={
+              <Space>
+                <CodeOutlined />
+                <span>控制台输出</span>
+                {executing && <Spin size="small" />}
+              </Space>
+            }
+            extra={
+              <Space>
+                <Button
+                  size="small"
+                  icon={consoleFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                  onClick={() => setConsoleFullscreen(!consoleFullscreen)}
+                  title={consoleFullscreen ? "退出全屏" : "全屏查看"}
+                >
+                  {consoleFullscreen ? "退出全屏" : "全屏"}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<DownloadOutlined />}
+                  onClick={downloadConsoleLog}
+                  disabled={consoleOutput.length === 0}
+                >
+                  下载日志
+                </Button>
+                <Button
+                  size="small"
+                  icon={<ClearOutlined />}
+                  onClick={clearConsole}
+                >
+                  清空
+                </Button>
+              </Space>
+            }
+            style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+            bodyStyle={{ flex: 1, overflow: 'hidden', padding: 0 }}
+          >
+            <div
+              ref={consoleRef}
+              style={{
+                height: '100%',
+                background: '#000',
+                color: '#00ff00',
+                padding: '16px',
+                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                fontSize: '13px',
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all'
+              }}
+            >
+              {consoleOutput.length === 0 ? (
+                <Text style={{ color: '#666' }}>
+                  等待执行脚本...
+                  <br /><br />
+                  提示：
+                  <br />• 点击"执行"按钮 - 普通模式，查看输出
+                  <br />• 点击"交互式"按钮 - 弹窗终端，支持输入
+                  <br />• 交互式终端的输出会同步记录到日志
+                  <br />• 可以下载日志或清空控制台
+                </Text>
+              ) : (
+                consoleOutput.map((line, index) => (
+                  <div key={index}>{line}</div>
+                ))
+              )}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 新建文件对话框 */}
+      <Modal
+        title="新建文件"
+        open={createFileVisible}
+        onOk={handleConfirmCreateFile}
+        onCancel={() => {
+          setCreateFileVisible(false);
+          setNewFileName('');
+        }}
+        okText="创建"
+        cancelText="取消"
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text type="secondary">请输入文件名（自动添加.py后缀）</Text>
+          <Input
+            placeholder="例如: my_script"
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+            onPressEnter={handleConfirmCreateFile}
+            autoFocus
+            suffix=".py"
+          />
+        </Space>
+      </Modal>
+
+      {/* 创建目录对话框 */}
+      <Modal
+        title="创建目录"
+        open={createDirVisible}
+        onOk={handleCreateDir}
+        onCancel={() => {
+          setCreateDirVisible(false);
+          setNewDirName('');
+        }}
+        okText="创建"
+        cancelText="取消"
+      >
+        <Input
+          placeholder="请输入目录名称"
+          value={newDirName}
+          onChange={(e) => setNewDirName(e.target.value)}
+          onPressEnter={handleCreateDir}
+          autoFocus
+        />
+      </Modal>
+
+      {/* 重命名对话框 */}
+      <Modal
+        title="重命名"
+        open={!!renamingItem}
+        onOk={handleRename}
+        onCancel={() => {
+          setRenamingItem(null);
+          setNewName('');
+        }}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text type="secondary">原名称: {renamingItem?.name}</Text>
+          <Input
+            placeholder="请输入新名称"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onPressEnter={handleRename}
+            autoFocus
+          />
+        </Space>
+      </Modal>
+
+      {/* 文件编辑器 */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined />
+            <span>{editingFile ? `编辑: ${editingFile.name}` : '新建文件'}</span>
+            {editingFile && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                ({editingFile.name.split('.').pop()?.toUpperCase()} 文件)
+              </Text>
+            )}
+          </Space>
+        }
+        open={editModalVisible}
+        onCancel={() => {
+          setEditModalVisible(false);
+          setEditingFile(null);
+        }}
+        width="80%"
+        style={{ top: 20 }}
+        footer={
+          editingFile?.name.toLowerCase().endsWith('.csv') ? [
+            <Button key="close" onClick={() => {
+              setEditModalVisible(false);
+              setEditingFile(null);
+            }}>
+              关闭
+            </Button>
+          ] : [
+            <Button key="cancel" onClick={() => {
+              setEditModalVisible(false);
+              setEditingFile(null);
+            }}>
+              取消
+            </Button>,
+            <Button key="save" type="primary" loading={saving} onClick={handleSaveFile}>
+              保存
+            </Button>
+          ]
+        }
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Text type="secondary">
+              文件路径: {editingFile?.path || ''}
+            </Text>
+            {!editingFile?.name.toLowerCase().endsWith('.csv') && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                💡 提示: 支持语法高亮、代码补全、Ctrl+S保存、Ctrl+F查找
+              </Text>
+            )}
+          </Space>
+        </div>
+        <div style={{ border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden' }}>
+          {editingFile?.name.toLowerCase().endsWith('.csv') ? (
+            <CsvViewer content={fileContent} />
+          ) : (
+            <CodeEditor
+              value={fileContent}
+              onChange={setFileContent}
+              fileName={editingFile?.name}
+              height="500px"
+            />
+          )}
+        </div>
+      </Modal>
+
+      {/* 交互式终端弹窗 */}
+      {terminalVisible && terminalScript && (
+        <TerminalModal
+          visible={terminalVisible}
+          scriptPath={terminalScript.path}
+          scriptName={terminalScript.name}
+          onClose={() => {
+            setTerminalVisible(false);
+            setTerminalScript(null);
+            addConsoleLog('='.repeat(60), 'info');
+            addConsoleLog('交互式终端已关闭', 'info');
+            addConsoleLog('='.repeat(60), 'info');
+            loadFiles();
+          }}
+          onLog={(msg) => {
+            // 将终端输出记录到控制台日志
+            const lines = msg.split('\n');
+            lines.forEach(line => {
+              if (line.trim()) {
+                addConsoleLog(line, 'info');
+              }
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default Workspace;

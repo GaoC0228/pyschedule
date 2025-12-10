@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# 环境配置
+.env
+*.pid
+
+# 日志
+logs/*.log
+
+# 上传文件
+uploads/
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据库
+*.db
+*.sqlite
+
+# ========================================
+# Docker持久化数据
+# ========================================
+volumes/*
+!volumes/.gitkeep
+!volumes/uploads/.gitkeep
+!volumes/work/.gitkeep
+!volumes/task_output/.gitkeep
+!volumes/task_data/.gitkeep
+
+logs/*
+!logs/.gitkeep
+!logs/mysql/.gitkeep
+!logs/backend/.gitkeep
+!logs/nginx/.gitkeep
+
+backups/*
+!backups/.gitkeep
+!backups/mysql/.gitkeep
+
+# ========================================
+# 临时文件和缓存
+# ========================================
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# 前端构建缓存
+frontend/.npmrc
+frontend/package-lock.json
+frontend/yarn.lock
+frontend/pnpm-lock.yaml
+
+# Python虚拟环境
+venv/
+env/
+.venv/
+
+# PyCharm
+.idea/
+
+# ========================================
+# 敏感数据（不要上传到Git）
+# ========================================
+*.key
+*.pem
+*.crt
+*.p12
+.env.local
+.env.production
+
+# 数据文件
+data/*
+!data/.gitkeep
+!data/README.md
+
+# 脚本执行输出
+scripts/output/*
+!scripts/output/.gitkeep

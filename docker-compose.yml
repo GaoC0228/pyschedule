@@ -1,0 +1,164 @@
+services:
+  # ========================================
+  # MySQL 数据库服务
+  # ========================================
+  database:
+    image: mysql:8.0
+    container_name: pyschedule-database
+    hostname: pyschedule-db
+    
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password_change_me}
+      MYSQL_DATABASE: ${DB_NAME:-pyschedule}
+      # ⚠️ 不设置MYSQL_USER，直接使用root用户
+      # 如果设置了MYSQL_USER，会创建额外的普通用户
+      TZ: Asia/Shanghai
+    
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    
+    volumes:
+      # MySQL数据目录
+      - ./volumes/mysql:/var/lib/mysql
+      # 初始化脚本
+      - ./database/init-scripts:/docker-entrypoint-initdb.d:ro
+      # MySQL配置文件
+      - ./database/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      # MySQL日志
+      - ./logs/mysql:/var/log/mysql
+      # 备份目录
+      - ./backups/mysql:/backups
+    
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-root_password_change_me}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    networks:
+      - pyschedule-network
+
+  # ========================================
+  # 后端服务
+  # ========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: pyschedule-backend:2.0
+    container_name: pyschedule-backend
+    
+    depends_on:
+      database:
+        condition: service_healthy
+    
+    ports:
+      - "${BACKEND_PORT:-8088}:8088"
+    
+    environment:
+      DATABASE_URL: mysql+pymysql://${DB_USER:-root}:${DB_PASSWORD:-changeme}@database:3306/${DB_NAME:-pyschedule}?charset=utf8mb4
+      SECRET_KEY: ${SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
+      TZ: Asia/Shanghai
+      # 路径配置（用于paths.py）
+      PROJECT_ROOT: /app
+      DATA_ROOT: /app/data
+      LOGS_ROOT: /app/logs
+    
+    volumes:
+      # 后端日志
+      - ./logs/backend:/app/logs
+      # 用户工作区
+      - ./volumes/work:/app/work
+      # 上传的文件
+      - ./volumes/uploads:/app/uploads
+      # 任务数据目录（包含所有任务的输入输出文件）
+      - ./volumes/task_data:/app/data
+      # 持久化requirements.txt（支持动态安装包）
+      - ./backend/requirements.txt:/app/requirements.txt
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    networks:
+      - pyschedule-network
+
+  # ========================================
+  # 前端服务
+  # ========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8088}
+    image: pyschedule-frontend:2.0
+    container_name: pyschedule-frontend
+    
+    depends_on:
+      backend:
+        condition: service_healthy
+    
+    ports:
+      - "${FRONTEND_PORT:-3001}:80"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    networks:
+      - pyschedule-network
+
+networks:
+  pyschedule-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
