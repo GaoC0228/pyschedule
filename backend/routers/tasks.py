@@ -354,28 +354,36 @@ def search_execution_logs(
         TaskExecution.log_file.isnot(None)
     ).order_by(TaskExecution.start_time.desc()).all()
     
-    # 搜索日志文件
+    # 搜索日志文件（优化：流式读取，避免大文件卡顿）
     matched_executions = []
     for execution in executions:
         if execution.log_file and os.path.exists(execution.log_file):
             try:
+                # 检查文件大小，超过10MB跳过
+                file_size = os.path.getsize(execution.log_file)
+                if file_size > 10 * 1024 * 1024:  # 10MB
+                    continue
+                
+                # 流式读取，只保存匹配的行
+                matched_lines = []
                 with open(execution.log_file, 'r', encoding='utf-8') as f:
-                    log_content = f.read()
-                    if keyword.lower() in log_content.lower():
-                        matched_executions.append({
-                            "id": execution.id,
-                            "task_id": execution.task_id,
-                            "trigger_type": execution.trigger_type,
-                            "status": execution.status,
-                            "start_time": execution.start_time,
-                            "end_time": execution.end_time,
-                            "exit_code": execution.exit_code,
-                            # 提取包含关键字的行（最多3行）
-                            "matched_lines": [
-                                line.strip() for line in log_content.split('\n')
-                                if keyword.lower() in line.lower()
-                            ][:3]
-                        })
+                    for line in f:
+                        if keyword.lower() in line.lower():
+                            matched_lines.append(line.strip())
+                            if len(matched_lines) >= 3:  # 最多保存3行
+                                break
+                
+                if matched_lines:
+                    matched_executions.append({
+                        "id": execution.id,
+                        "task_id": execution.task_id,
+                        "trigger_type": execution.trigger_type,
+                        "status": execution.status,
+                        "start_time": execution.start_time,
+                        "end_time": execution.end_time,
+                        "exit_code": execution.exit_code,
+                        "matched_lines": matched_lines
+                    })
             except Exception as e:
                 continue
     
@@ -540,6 +548,7 @@ def download_task_script(
 def get_execution_log(
     task_id: int,
     execution_id: int,
+    full: bool = False,  # 是否返回全部日志
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -566,16 +575,36 @@ def get_execution_log(
         return {
             "log": "日志文件不存在",
             "log_file": execution.log_file,
-            "exists": False
+            "log_file_relative": None,
+            "exists": False,
+            "is_partial": False,
+            "file_info": {"exists": False}
         }
     
-    log_content = task_logger.read_log(execution.log_file)
+    # 获取日志文件信息
+    log_info = task_logger.get_log_info(execution.log_file)
+    
+    # 计算相对路径（从volumes/task_data开始）
+    log_file_relative = execution.log_file.replace('/app/volumes/', '') if execution.log_file else None
+    
+    # 根据参数决定读取多少行
+    if full:
+        # 全部日志：读取所有内容（最多10000行避免过大）
+        log_content = task_logger.read_log(execution.log_file, max_lines=10000)
+        is_partial = False
+    else:
+        # 部分日志：只读取最后100行
+        log_content = task_logger.read_log(execution.log_file, max_lines=100)
+        # 判断是否有更多内容
+        is_partial = log_info.get("line_count", 0) > 100 if log_info.get("line_count") else log_info.get("is_large", False)
     
     return {
         "log": log_content,
         "log_file": execution.log_file,
+        "log_file_relative": log_file_relative,  # 相对路径
         "exists": True,
-        "size": os.path.getsize(execution.log_file) if execution.log_file else 0
+        "is_partial": is_partial,  # 是否只是部分日志
+        "file_info": log_info
     }
 
 

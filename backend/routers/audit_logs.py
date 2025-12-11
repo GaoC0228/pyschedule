@@ -257,6 +257,7 @@ def get_audit_log_detail(
 @router.get("/{audit_id}/log")
 def get_execution_log(
     audit_id: int,
+    full: bool = False,  # 是否返回全部日志
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
@@ -270,20 +271,50 @@ def get_execution_log(
     
     # 解析details获取log_file路径
     import json
+    import os
     from utils.execution_log import read_execution_log
     
     log_content = ""
     trigger_type = "unknown"
+    log_file_path = ""
+    log_file_relative = None
+    is_partial = False
+    file_info = {"exists": False}
     
     try:
         details = json.loads(audit_log.details) if audit_log.details else {}
         log_file = details.get("log_file", "")
         trigger_type = details.get("trigger_type", "unknown")
+        log_file_path = log_file
         
         if log_file:
-            # 从文件读取日志
-            log_content = read_execution_log(log_file)
-            if log_content is None:
+            # 构建完整路径检查文件
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            full_path = os.path.join(base_dir, log_file)
+            
+            if os.path.exists(full_path):
+                file_size = os.path.getsize(full_path)
+                file_info = {
+                    "exists": True,
+                    "size_bytes": file_size,
+                    "size_mb": round(file_size / (1024 * 1024), 2),
+                    "is_large": file_size > 1024 * 1024
+                }
+                
+                # 获取相对路径
+                log_file_relative = log_file
+                
+                # 读取日志内容
+                log_content = read_execution_log(log_file)
+                if log_content is None:
+                    log_content = "(日志文件不存在或已被删除)"
+                elif not full and len(log_content) > 50000:  # 如果内容超过50KB
+                    # 只显示最后100行
+                    lines = log_content.split('\n')
+                    if len(lines) > 100:
+                        log_content = "⚠️ 日志内容较大，仅显示最后100行\n" + "="*80 + "\n\n" + '\n'.join(lines[-100:])
+                        is_partial = True
+            else:
                 log_content = "(日志文件不存在或已被删除)"
         else:
             log_content = "(未找到日志文件)"
@@ -296,7 +327,10 @@ def get_execution_log(
         "created_at": audit_log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         "status": audit_log.status,
         "trigger_type": trigger_type,
-        "log_content": log_content
+        "log_content": log_content,
+        "log_file_relative": log_file_relative,  # 新增：日志文件相对路径
+        "is_partial": is_partial,  # 新增：是否只是部分日志
+        "file_info": file_info  # 新增：文件信息
     }
 
 

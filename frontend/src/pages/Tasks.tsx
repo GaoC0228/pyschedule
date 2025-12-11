@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Table, Button, Space, Tag, Modal, Form, Input, Upload, message, Drawer, Tabs, Switch as AntSwitch, Select } from 'antd'
+import { Table, Button, Space, Tag, Modal, Form, Input, Upload, message, Drawer, Tabs, Switch as AntSwitch, Select, Alert } from 'antd'
 import { PlusOutlined, PlayCircleOutlined, EditOutlined, DeleteOutlined, UploadOutlined, CodeOutlined, EyeOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from '../api/axios'
 import dayjs from 'dayjs'
@@ -26,6 +26,10 @@ const Tasks = () => {
   const [scriptMode, setScriptMode] = useState<'write' | 'upload'>('write')
   const [saving, setSaving] = useState(false)
   const [countdowns, setCountdowns] = useState<{[key: number]: number}>({})
+  const [logPollingInterval, setLogPollingInterval] = useState<number | null>(null)
+  const [logFileRelative, setLogFileRelative] = useState<string | null>(null)
+  const [isPartialLog, setIsPartialLog] = useState(false)
+  const [loadingFullLog, setLoadingFullLog] = useState(false)
   const [form] = Form.useForm()
   const navigate = useNavigate()
 
@@ -49,6 +53,44 @@ const Tasks = () => {
     
     return () => clearInterval(interval)
   }, [])
+
+  // 日志实时轮询
+  useEffect(() => {
+    if (logDrawerVisible && currentExecution && currentExecution.status === 'running' && currentTask) {
+      // 任务运行中，每2秒刷新一次日志
+      const interval = window.setInterval(async () => {
+        try {
+          const response = await api.get(`/tasks/${currentTask.id}/executions/${currentExecution.id}/log`)
+          setExecutionLog(response.data.log || '日志内容为空')
+          
+          // 同时刷新执行状态
+          const executionsRes = await api.get(`/tasks/${currentTask.id}/executions`)
+          const updatedExecution = executionsRes.data.find((e: any) => e.id === currentExecution.id)
+          if (updatedExecution) {
+            setCurrentExecution(updatedExecution)
+            // 如果任务已完成，停止轮询
+            if (updatedExecution.status !== 'running') {
+              clearInterval(interval)
+              setLogPollingInterval(null)
+            }
+          }
+        } catch (error) {
+          console.error('刷新日志失败', error)
+        }
+      }, 2000)  // 2秒轮询
+      
+      setLogPollingInterval(interval)
+      
+      return () => {
+        clearInterval(interval)
+        setLogPollingInterval(null)
+      }
+    } else if (logPollingInterval) {
+      // 日志窗口关闭或任务已完成，停止轮询
+      clearInterval(logPollingInterval)
+      setLogPollingInterval(null)
+    }
+  }, [logDrawerVisible, currentExecution, currentTask])
 
   const fetchCurrentUser = async () => {
     try {
@@ -290,12 +332,31 @@ const Tasks = () => {
       setCurrentExecution(latestExecution)
       setCurrentTask(task)
       
-      // 获取执行日志
+      // 获取执行日志（默认部分日志）
       const logResponse = await api.get(`/tasks/${task.id}/executions/${latestExecution.id}/log`)
       setExecutionLog(logResponse.data.log || '日志内容为空')
+      setLogFileRelative(logResponse.data.log_file_relative)
+      setIsPartialLog(logResponse.data.is_partial)
       setLogDrawerVisible(true)
     } catch (error: any) {
       message.error(error.response?.data?.detail || '获取日志失败')
+    }
+  }
+
+  const handleLoadFullLog = async () => {
+    if (!currentTask || !currentExecution) return
+    setLoadingFullLog(true)
+    try {
+      const response = await api.get(`/tasks/${currentTask.id}/executions/${currentExecution.id}/log`, {
+        params: { full: true }
+      })
+      setExecutionLog(response.data.log || '日志内容为空')
+      setIsPartialLog(false)
+      message.success('已加载全部日志')
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '加载全部日志失败')
+    } finally {
+      setLoadingFullLog(false)
     }
   }
 
@@ -678,6 +739,15 @@ const Tasks = () => {
           <div style={{ textAlign: 'right' }}>
             <Space>
               <Button onClick={() => setLogDrawerVisible(false)}>关闭</Button>
+              {isPartialLog && (
+                <Button 
+                  type="primary"
+                  loading={loadingFullLog}
+                  onClick={handleLoadFullLog}
+                >
+                  查看全部日志
+                </Button>
+              )}
               <Button 
                 type="primary" 
                 onClick={() => navigate(`/tasks/${currentTask?.id}`)}
@@ -698,8 +768,20 @@ const Tasks = () => {
               {currentExecution.end_time && (
                 <div><strong>结束时间:</strong> {dayjs(currentExecution.end_time).format('YYYY-MM-DD HH:mm:ss')}</div>
               )}
+              {logFileRelative && (
+                <div><strong>日志文件:</strong> <code style={{ background: '#f0f0f0', padding: '2px 6px', borderRadius: '3px' }}>{logFileRelative}</code></div>
+              )}
             </Space>
           </div>
+        )}
+        {isPartialLog && (
+          <Alert
+            message="当前仅显示最后100行日志"
+            description="如需查看完整日志，请点击下方查看全部日志按钮"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
         )}
         <div style={{ 
           background: '#1e1e1e', 

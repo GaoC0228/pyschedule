@@ -14,8 +14,9 @@
 import sys
 import os
 
-# 自动添加backend目录到sys.path（固定路径）
-_backend_dir = '/opt/soft/exec_python_web/v1/backend'
+# 自动添加backend目录到sys.path（动态获取路径）
+_current_dir = os.path.dirname(os.path.abspath(__file__))  # db_configs目录
+_backend_dir = os.path.dirname(_current_dir)  # backend目录
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 

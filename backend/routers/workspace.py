@@ -16,6 +16,7 @@ from config import settings
 from utils.script_analyzer import ScriptAnalyzer
 from utils.workspace_permissions import WorkspacePermissions
 from utils.content_differ import content_differ
+from utils.request_utils import get_client_ip
 from utils.ip_utils import get_real_ip
 import logging
 
@@ -501,7 +502,7 @@ def update_file(
                 "has_changes": content_before != content_after,
                 **change_summary
             },
-            ip_address=request.client.host
+            ip_address=get_client_ip(request)
         )
         
         # 如果文件不超过100KB，保存快照和diff
@@ -574,7 +575,7 @@ def delete_file(
             resource_id=0,
             status="success",
             details={"file_path": file_path},
-            ip_address=request.client.host
+            ip_address=get_client_ip(request)
         )
         
         logger.info(f"用户 {current_user.username} 删除文件: {file_path}")
@@ -619,7 +620,7 @@ def rename_file(
             resource_id=0,
             status="success",
             details={"old_path": old_path, "new_path": new_path},
-            ip_address=request.client.host
+            ip_address=get_client_ip(request)
         )
         
         logger.info(f"用户 {current_user.username} 重命名: {old_path} → {new_path}")
@@ -653,7 +654,7 @@ def create_directory(
             action=AuditAction.WORKSPACE_UPLOAD,
             resource_type=ResourceType.WORKSPACE,
             details={"dir_path": dir_path},
-            ip_address=request.client.host
+            ip_address=get_client_ip(request)
         )
         
         return {"message": "目录创建成功", "path": dir_path}

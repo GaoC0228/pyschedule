@@ -18,6 +18,25 @@ from terminal import TerminalManager
 from audit import create_audit_log, AuditAction, ResourceType
 from utils.execution_log import save_execution_log
 
+
+def get_websocket_client_ip(websocket: WebSocket) -> str:
+    """从WebSocket获取客户端真实IP"""
+    # 优先从X-Real-IP获取
+    real_ip = websocket.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+    
+    # 从X-Forwarded-For获取
+    forwarded_for = websocket.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    
+    # 降级使用直接连接IP
+    if websocket.client:
+        return websocket.client.host
+    
+    return "unknown"
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -104,7 +123,7 @@ async def terminal_websocket(
                                         "session_id": session_id,
                                         "log_file": ""
                                     },
-                                    ip_address=(getattr(websocket.client, 'host', None) or "127.0.0.1")
+                                    ip_address=get_websocket_client_ip(websocket)
                                 )
                             
                             SESSION_DATA[session_id] = {

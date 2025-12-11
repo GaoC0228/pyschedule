@@ -46,11 +46,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '4'
+          memory: 4G
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '1'
+          memory: 1G
     
     networks:
       - pyschedule-network
@@ -85,8 +85,8 @@ services:
       LOGS_ROOT: /app/logs
     
     volumes:
-      # 后端日志
-      - ./logs/backend:/app/logs
+      # 后端日志（挂载整个logs目录，包含execution等子目录）
+      - ./logs:/app/logs
       # 用户工作区
       - ./volumes/work:/app/work
       # 上传的文件
@@ -108,11 +108,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 1G
+          cpus: '4'
+          memory: 4G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '1'
+          memory: 1G
     
     networks:
       - pyschedule-network
@@ -147,11 +147,11 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
           cpus: '0.5'
           memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
     
     networks:
       - pyschedule-network

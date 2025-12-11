@@ -21,10 +21,52 @@ const TaskDetail = () => {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchResults, setSearchResults] = useState<any>(null)
   const [searching, setSearching] = useState(false)
+  const [logPollingInterval, setLogPollingInterval] = useState<number | null>(null)
+  const [logFileRelative, setLogFileRelative] = useState<string | null>(null)
+  const [isPartialLog, setIsPartialLog] = useState(false)
+  const [loadingFullLog, setLoadingFullLog] = useState(false)
 
   useEffect(() => {
     fetchData()
   }, [id])
+
+  // 日志实时轮询
+  useEffect(() => {
+    if (logModalVisible && currentExecution && currentExecution.status === 'running') {
+      // 任务运行中，每2秒刷新一次日志
+      const interval = window.setInterval(async () => {
+        try {
+          const response = await api.get(`/tasks/${id}/executions/${currentExecution.id}/log`)
+          setCurrentLog(response.data.log || '日志内容为空')
+          
+          // 同时刷新执行状态
+          const executionsRes = await api.get(`/tasks/${id}/executions`)
+          const updatedExecution = executionsRes.data.find((e: any) => e.id === currentExecution.id)
+          if (updatedExecution) {
+            setCurrentExecution(updatedExecution)
+            // 如果任务已完成，停止轮询
+            if (updatedExecution.status !== 'running') {
+              clearInterval(interval)
+              setLogPollingInterval(null)
+            }
+          }
+        } catch (error) {
+          console.error('刷新日志失败', error)
+        }
+      }, 2000)  // 2秒轮询
+      
+      setLogPollingInterval(interval)
+      
+      return () => {
+        clearInterval(interval)
+        setLogPollingInterval(null)
+      }
+    } else if (logPollingInterval) {
+      // 日志窗口关闭或任务已完成，停止轮询
+      clearInterval(logPollingInterval)
+      setLogPollingInterval(null)
+    }
+  }, [logModalVisible, currentExecution])
 
   const fetchData = async () => {
     try {
@@ -41,14 +83,35 @@ const TaskDetail = () => {
     }
   }
 
-  const handleViewLog = async (execution: any) => {
+  const handleViewLog = async (execution: any, full: boolean = false) => {
     try {
-      const response = await api.get(`/tasks/${id}/executions/${execution.id}/log`)
+      const response = await api.get(`/tasks/${id}/executions/${execution.id}/log`, {
+        params: { full }
+      })
       setCurrentLog(response.data.log || '日志内容为空')
       setCurrentExecution(execution)
+      setLogFileRelative(response.data.log_file_relative)
+      setIsPartialLog(response.data.is_partial && !full)
       setLogModalVisible(true)
     } catch (error: any) {
       message.error(error.response?.data?.detail || '获取日志失败')
+    }
+  }
+
+  const handleLoadFullLog = async () => {
+    if (!currentExecution) return
+    setLoadingFullLog(true)
+    try {
+      const response = await api.get(`/tasks/${id}/executions/${currentExecution.id}/log`, {
+        params: { full: true }
+      })
+      setCurrentLog(response.data.log || '日志内容为空')
+      setIsPartialLog(false)
+      message.success('已加载全部日志')
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '加载全部日志失败')
+    } finally {
+      setLoadingFullLog(false)
     }
   }
 
@@ -381,7 +444,17 @@ const TaskDetail = () => {
         footer={[
           <Button key="close" onClick={() => setLogModalVisible(false)}>
             关闭
-          </Button>
+          </Button>,
+          isPartialLog && (
+            <Button 
+              key="loadFull" 
+              type="primary"
+              loading={loadingFullLog}
+              onClick={handleLoadFullLog}
+            >
+              查看全部日志
+            </Button>
+          )
         ]}
       >
         {currentExecution && (
@@ -400,8 +473,20 @@ const TaskDetail = () => {
               {currentExecution.exit_code !== null && currentExecution.exit_code !== undefined && (
                 <div><strong>退出码:</strong> <Tag color={currentExecution.exit_code === 0 ? 'success' : 'error'}>{currentExecution.exit_code}</Tag></div>
               )}
+              {logFileRelative && (
+                <div><strong>日志文件:</strong> <code style={{ background: '#f0f0f0', padding: '2px 6px', borderRadius: '3px' }}>{logFileRelative}</code></div>
+              )}
             </Space>
           </div>
+        )}
+        {isPartialLog && (
+          <Alert
+            message="当前仅显示最后100行日志"
+            description="如需查看完整日志，请点击下方查看全部日志按钮"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
         )}
         <div style={{ 
           background: '#1e1e1e', 

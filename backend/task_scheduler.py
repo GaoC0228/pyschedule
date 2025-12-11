@@ -121,10 +121,18 @@ class TaskScheduler:
 """
             task_logger.write_log(log_file, log_header, mode='w')
             
-            # 准备环境变量
+            # 设置环境变量
             env = os.environ.copy()
-            # 添加PYTHONPATH，让脚本可以导入backend的公共模块（如db_configs）
-            env['PYTHONPATH'] = f"/app:{env.get('PYTHONPATH', '')}"
+            
+            # 添加PYTHONPATH，让脚本可以导入backend的模块（如db_configs）
+            # __file__ 是 /app/task_scheduler.py，dirname一次得到 /app
+            backend_path = os.path.dirname(os.path.abspath(__file__))  # /app
+            current_pythonpath = env.get('PYTHONPATH', '')
+            if current_pythonpath:
+                env['PYTHONPATH'] = f"{backend_path}:{current_pythonpath}"
+            else:
+                env['PYTHONPATH'] = backend_path
+            
             env.update({
                 'TASK_ID': str(task_id),
                 'TASK_NAME': task.name,

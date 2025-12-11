@@ -89,6 +89,10 @@ const AuditLogs: React.FC = () => {
   const [logVisible, setLogVisible] = useState(false);
   const [logContent, setLogContent] = useState('');
   const [logLoading, setLogLoading] = useState(false);
+  const [logFileRelative, setLogFileRelative] = useState<string | null>(null);
+  const [isPartialLog, setIsPartialLog] = useState(false);
+  const [loadingFullLog, setLoadingFullLog] = useState(false);
+  const [currentAuditId, setCurrentAuditId] = useState<number | null>(null);
 
   // 文件变更查看器
   const [changesVisible, setChangesVisible] = useState(false);
@@ -142,9 +146,20 @@ const AuditLogs: React.FC = () => {
   const handleViewDetail = async (id: number) => {
     setDetailLoading(true);
     setDetailVisible(true);
+    setCurrentAuditId(id);
     try {
       const response = await api.get(`/audit/${id}`);
       setCurrentDetail(response.data);
+      
+      // 自动加载部分日志（不弹出Modal）
+      try {
+        const logResponse = await api.get(`/audit/${id}/log`);
+        setLogContent(logResponse.data.log_content || '暂无日志');
+        setLogFileRelative(logResponse.data.log_file_relative);
+        setIsPartialLog(logResponse.data.is_partial || false);
+      } catch (logError) {
+        setLogContent('(加载日志失败)');
+      }
     } catch (error) {
       message.error('获取详情失败');
     } finally {
@@ -167,20 +182,42 @@ const AuditLogs: React.FC = () => {
     }
   };
 
-  // 查看执行日志
+  // 查看执行日志（完整版，弹出Modal）
   const handleViewLog = async (id: number) => {
     setLogLoading(true);
     setLogVisible(true);
+    setCurrentAuditId(id);
     try {
+      // 加载全部日志
       const response = await api.get(`/audit/${id}/log`, {
-        params: { log_type: 'all' }
+        params: { full: true }
       });
       setLogContent(response.data.log_content || '暂无日志');
+      setLogFileRelative(response.data.log_file_relative);
+      setIsPartialLog(false); // 全部日志，不是部分
     } catch (error) {
       message.error('获取日志失败');
       setLogContent('获取日志失败');
     } finally {
       setLogLoading(false);
+    }
+  };
+
+  // 加载全部日志
+  const handleLoadFullLog = async () => {
+    if (!currentAuditId) return;
+    setLoadingFullLog(true);
+    try {
+      const response = await api.get(`/audit/${currentAuditId}/log`, {
+        params: { full: true }
+      });
+      setLogContent(response.data.log_content || '暂无日志');
+      setIsPartialLog(false);
+      message.success('已加载全部日志');
+    } catch (error) {
+      message.error('加载全部日志失败');
+    } finally {
+      setLoadingFullLog(false);
     }
   };
 
@@ -671,18 +708,39 @@ const AuditLogs: React.FC = () => {
                     {currentDetail.execution.exit_code !== undefined ? currentDetail.execution.exit_code : '-'}
                   </Descriptions.Item>
                 </Descriptions>
+              </>
+            )}
 
-                {(currentDetail.execution.has_stdout || currentDetail.execution.has_stderr) && (
-                  <div style={{ marginTop: 16 }}>
-                    <Button
-                      type="primary"
-                      icon={<FileTextOutlined />}
-                      onClick={() => handleViewLog(currentDetail.id)}
-                    >
-                      查看执行日志
-                    </Button>
+            {/* 执行日志预览 - 只要有脚本名就显示 */}
+            {currentDetail.script_name && (
+              <>
+                <Divider />
+                <div>
+                  <Text strong style={{ fontSize: 16 }}>执行日志</Text>
+                  
+                  {logFileRelative && (
+                    <div style={{ marginTop: 12, marginBottom: 12 }}>
+                      <Text strong>日志文件: </Text>
+                      <Text code style={{ fontSize: 12 }}>{logFileRelative}</Text>
+                    </div>
+                  )}
+                  
+                  <div style={{ 
+                    background: '#000', 
+                    color: '#0f0', 
+                    padding: 12, 
+                    borderRadius: 4, 
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    maxHeight: 300,
+                    overflow: 'auto',
+                    marginTop: 12
+                  }}>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {logContent || '加载中...'}
+                    </pre>
                   </div>
-                )}
+                </div>
               </>
             )}
 
@@ -792,7 +850,7 @@ const AuditLogs: React.FC = () => {
         title="执行日志"
         open={logVisible}
         onCancel={() => setLogVisible(false)}
-        width={800}
+        width={900}
         footer={[
           <Button key="copy" onClick={() => {
             navigator.clipboard.writeText(logContent);
@@ -800,11 +858,41 @@ const AuditLogs: React.FC = () => {
           }}>
             复制
           </Button>,
+          isPartialLog && (
+            <Button 
+              key="loadFull" 
+              type="primary"
+              loading={loadingFullLog}
+              onClick={handleLoadFullLog}
+            >
+              查看全部日志
+            </Button>
+          ),
           <Button key="close" type="primary" onClick={() => setLogVisible(false)}>
             关闭
           </Button>,
         ]}
       >
+        {logFileRelative && (
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>日志文件:</Text>{' '}
+            <Text code style={{ fontSize: 12 }}>{logFileRelative}</Text>
+          </div>
+        )}
+        {isPartialLog && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ 
+              background: '#e6f7ff', 
+              border: '1px solid #91d5ff', 
+              borderRadius: 4, 
+              padding: '8px 12px',
+              fontSize: 14
+            }}>
+              <span style={{ marginRight: 8 }}>ℹ️</span>
+              当前仅显示最后100行日志，如需查看完整日志，请点击下方查看全部日志按钮
+            </div>
+          </div>
+        )}
         <div style={{ maxHeight: 500, overflow: 'auto', background: '#000', color: '#0f0', padding: 16, borderRadius: 4, fontFamily: 'monospace' }}>
           <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
             {logLoading ? '加载中...' : logContent}
