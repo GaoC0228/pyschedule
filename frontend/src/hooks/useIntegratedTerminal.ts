@@ -45,7 +45,12 @@ export const useIntegratedTerminal = ({
     // 连接WebSocket
     const token = localStorage.getItem('token');
     const sessionId = `session_${Date.now()}`;
-    const wsUrl = `ws://localhost:8088/ws/terminal/${sessionId}?token=${token}`;
+    
+    // 动态构建WebSocket URL，支持通过域名代理访问
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const basePath = window.location.pathname.startsWith('/python') ? '/python/api' : '/api';
+    const wsUrl = `${protocol}//${host}${basePath}/ws/terminal/${sessionId}?token=${token}`;
     
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

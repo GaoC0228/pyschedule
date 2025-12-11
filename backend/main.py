@@ -78,6 +78,14 @@ app.include_router(audit_cleaner.router, prefix="/api/audit-cleaner", tags=["aud
 # 注册Web终端WebSocket路由
 app.include_router(web_terminal_ws.router)
 
+# 注册调试路由
+from routers import debug
+app.include_router(debug.router)
+
+# 注册脚本执行WebSocket路由
+from routers import script_execution_ws
+app.include_router(script_execution_ws.router)
+
 # 注册包管理路由
 app.include_router(packages.router)
 

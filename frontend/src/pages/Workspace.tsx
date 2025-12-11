@@ -37,7 +37,6 @@ const Workspace: React.FC = () => {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState('');
   const [loading, setLoading] = useState(false);
-  const [executing, setExecuting] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string>('');
   const [createDirVisible, setCreateDirVisible] = useState(false);
@@ -48,7 +47,7 @@ const Workspace: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [terminalVisible, setTerminalVisible] = useState(false);
-  const [terminalScript, setTerminalScript] = useState<{ path: string; name: string } | null>(null);
+  const [terminalScript, setTerminalScript] = useState<{ path: string; name: string; executionMode?: 'auto' | 'interactive' } | null>(null);
   const [renamingItem, setRenamingItem] = useState<{ path: string; name: string } | null>(null);
   const [newName, setNewName] = useState('');
   const [createFileVisible, setCreateFileVisible] = useState(false);
@@ -145,7 +144,6 @@ const Workspace: React.FC = () => {
 
   const handleExecute = async (filePath: string, fileName: string) => {
     setSelectedFile(filePath);
-    setExecuting(true);
     
     addConsoleLog('='.repeat(60), 'info');
     addConsoleLog(`准备执行脚本: ${fileName}`, 'info');
@@ -260,62 +258,32 @@ const Workspace: React.FC = () => {
         if (!confirmed) {
           addConsoleLog('用户取消执行', 'warning');
           addConsoleLog('='.repeat(60), 'info');
-          setExecuting(false);
           return;
         }
       }
       
       addConsoleLog('', 'info');
-      addConsoleLog('开始执行脚本...', 'warning');
+      addConsoleLog('✓ 安全性检查通过，正在打开终端执行...', 'success');
       
-      const response = await axios.post('/workspace/execute', null, {
-        params: { file_path: filePath }
-      });
-
-      const scriptDir = filePath.substring(0, filePath.lastIndexOf('/')) || '根目录';
-      
-      addConsoleLog('', 'info');
-      addConsoleLog(`执行用户: ${response.data.executed_by}`, 'info');
-      addConsoleLog(`执行时间: ${dayjs(response.data.executed_at).format('YYYY-MM-DD HH:mm:ss')}`, 'info');
-      addConsoleLog(`工作目录: ${scriptDir}`, 'info');
-      addConsoleLog(`返回码: ${response.data.returncode}`, 'info');
-      addConsoleLog(`状态: ${response.data.success ? '✓ 成功' : '✗ 失败'}`, response.data.success ? 'success' : 'error');
-      addConsoleLog('', 'info');
-      addConsoleLog('=== 标准输出 ===', 'info');
-      
-      if (response.data.stdout) {
-        response.data.stdout.split('\n').forEach((line: string) => {
-          addConsoleLog(line, 'info');
-        });
-      } else {
-        addConsoleLog('(无输出)', 'info');
-      }
-      
-      if (response.data.stderr) {
-        addConsoleLog('', 'info');
-        addConsoleLog('=== 错误输出 ===', 'warning');
-        response.data.stderr.split('\n').forEach((line: string) => {
-          addConsoleLog(line, 'error');
-        });
-      }
-      
-      addConsoleLog('', 'info');
-      addConsoleLog('='.repeat(60), 'info');
-      addConsoleLog('执行完成！', 'success');
-      addConsoleLog('提示: 如有文件生成，请点击刷新查看', 'info');
+      // 智能判断执行模式
+      const executionMode = analysis.is_interactive ? 'interactive' : 'auto';
+      const modeText = analysis.is_interactive ? '交互式模式' : '自动执行模式';
+      addConsoleLog(`检测到: ${modeText}`, 'info');
       addConsoleLog('='.repeat(60), 'info');
       
-      if (response.data.success) {
-        message.success('脚本执行成功！');
-        // 自动刷新文件列表
-        setTimeout(() => loadFiles(), 1000);
-      }
+      // 统一使用集成终端（WebSocket）执行所有脚本
+      // auto模式：自动执行，完成后3秒自动关闭
+      // interactive模式：交互式，需要手动关闭
+      setTerminalScript({ path: filePath, name: fileName, executionMode });
+      setTerminalVisible(true);
+      
+      // 执行完成后刷新文件列表
+      setTimeout(() => loadFiles(), 2000);
+      
     } catch (error: any) {
-      const errorMsg = '执行失败: ' + (error.response?.data?.detail || error.message);
+      const errorMsg = '分析脚本失败: ' + (error.response?.data?.detail || error.message);
       addConsoleLog(`✗ ${errorMsg}`, 'error');
       message.error(errorMsg);
-    } finally {
-      setExecuting(false);
     }
   };
 
@@ -776,112 +744,9 @@ print("Hello, World!")
                             e.stopPropagation();
                             handleExecute(item.path, item.name);
                           }}
-                          loading={executing && selectedFile === item.path}
+                          loading={terminalVisible && terminalScript?.path === item.path}
                         >
-                          执行
-                        </Button>
-                      ),
-                      item.type === 'file' && item.extension === '.py' && (
-                        <Button
-                          size="small"
-                          icon={<CodeSandboxOutlined />}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            addConsoleLog('='.repeat(60), 'info');
-                            addConsoleLog(`准备启动交互式执行: ${item.name}`, 'info');
-                            addConsoleLog('='.repeat(60), 'info');
-                            
-                            try {
-                              // 先分析脚本安全性
-                              addConsoleLog('正在分析脚本安全性...', 'warning');
-                              const analysisResponse = await axios.post('/workspace/analyze-script', null, {
-                                params: { file_path: item.path }
-                              });
-                              
-                              const analysis = analysisResponse.data;
-                              
-                              // 如果有风险，显示确认对话框
-                              if (analysis.has_risk) {
-                                addConsoleLog('', 'info');
-                                addConsoleLog('⚠️ 检测到脚本风险！', 'warning');
-                                
-                                const confirmed = await new Promise<boolean>((resolve) => {
-                                  Modal.confirm({
-                                    title: '⚠️ 交互式执行风险提示',
-                                    width: 700,
-                                    icon: <ExclamationCircleOutlined style={{ color: analysis.risk_level === 'critical' ? '#ff4d4f' : '#faad14' }} />,
-                                    content: (
-                                      <div>
-                                        <p style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>
-                                          风险等级: <span style={{ color: analysis.risk_level === 'critical' ? '#ff4d4f' : '#faad14' }}>
-                                            {analysis.risk_level.toUpperCase()}
-                                          </span>
-                                        </p>
-                                        
-                                        {analysis.database_configs && analysis.database_configs.length > 0 && (
-                                          <div style={{ marginBottom: 16 }}>
-                                            <p style={{ fontWeight: 'bold', marginBottom: 8 }}>将连接以下数据库：</p>
-                                            {analysis.database_configs.map((db: any, index: number) => (
-                                              <div key={index} style={{ 
-                                                padding: 8, 
-                                                background: db.environment === 'production' ? '#fff2e8' : '#f0f0f0',
-                                                borderLeft: `3px solid ${db.environment === 'production' ? '#ff4d4f' : '#1890ff'}`,
-                                                marginBottom: 8
-                                              }}>
-                                                <div><strong>{db.display_name}</strong></div>
-                                                <div>环境: <Tag color={db.environment === 'production' ? 'red' : 'blue'}>{db.environment}</Tag></div>
-                                                <div>类型: {db.db_type}</div>
-                                                <div>主机: {db.host}</div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                        
-                                        {analysis.dangerous_operations && analysis.dangerous_operations.length > 0 && (
-                                          <div style={{ marginBottom: 16 }}>
-                                            <p style={{ fontWeight: 'bold', marginBottom: 8 }}>检测到以下操作：</p>
-                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                              {analysis.dangerous_operations.map((op: string, index: number) => (
-                                                <Tag key={index} color="warning">{op}</Tag>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        )}
-                                        
-                                        <p style={{ marginTop: 16, fontWeight: 'bold' }}>
-                                          请确认是否在交互式终端中执行此脚本？
-                                        </p>
-                                      </div>
-                                    ),
-                                    okText: '确认执行',
-                                    okType: analysis.risk_level === 'critical' ? 'danger' : 'primary',
-                                    cancelText: '取消',
-                                    onOk: () => resolve(true),
-                                    onCancel: () => resolve(false)
-                                  });
-                                });
-                                
-                                if (!confirmed) {
-                                  addConsoleLog('用户取消执行', 'warning');
-                                  addConsoleLog('='.repeat(60), 'info');
-                                  return;
-                                }
-                              }
-                              
-                              addConsoleLog('', 'info');
-                              addConsoleLog('启动交互式终端...', 'info');
-                              addConsoleLog('提示: 交互式终端将在新窗口打开，所有输出会同步记录到日志', 'info');
-                              addConsoleLog('='.repeat(60), 'info');
-                              setTerminalScript({ path: item.path, name: item.name });
-                              setTerminalVisible(true);
-                              
-                            } catch (error: any) {
-                              addConsoleLog('分析脚本失败: ' + (error.response?.data?.detail || error.message), 'error');
-                              addConsoleLog('='.repeat(60), 'info');
-                            }
-                          }}
-                        >
-                          交互式
+                          执行脚本
                         </Button>
                       ),
                       <Dropdown
@@ -993,7 +858,7 @@ print("Hello, World!")
               <Space>
                 <CodeOutlined />
                 <span>控制台输出</span>
-                {executing && <Spin size="small" />}
+                {terminalVisible && <Spin size="small" />}
               </Space>
             }
             extra={
@@ -1066,7 +931,7 @@ print("Hello, World!")
           <Space>
             <CodeOutlined />
             <span>控制台输出（全屏）</span>
-            {executing && <Spin size="small" />}
+            {terminalVisible && <Spin size="small" />}
           </Space>
         }
         open={consoleFullscreen}
@@ -1254,11 +1119,12 @@ print("Hello, World!")
           visible={terminalVisible}
           scriptPath={terminalScript.path}
           scriptName={terminalScript.name}
+          executionMode={terminalScript.executionMode || 'interactive'}
           onClose={() => {
             setTerminalVisible(false);
             setTerminalScript(null);
             addConsoleLog('='.repeat(60), 'info');
-            addConsoleLog('交互式终端已关闭', 'info');
+            addConsoleLog('终端已关闭', 'info');
             addConsoleLog('='.repeat(60), 'info');
             loadFiles();
           }}

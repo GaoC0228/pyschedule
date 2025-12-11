@@ -82,26 +82,26 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-async def get_current_user_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> User:
-    """从WebSocket获取当前用户（通过查询参数中的token）"""
+async def get_current_user_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> Optional[User]:
+    """从WebSocket获取当前用户（通过查询参数中的token）
+    
+    Returns:
+        User对象，如果验证失败返回None
+    """
     token = websocket.query_params.get("token")
     if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise HTTPException(status_code=401, detail="未提供认证令牌")
+        return None
     
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            raise HTTPException(status_code=401, detail="无效的令牌")
+            return None
     except JWTError:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise HTTPException(status_code=401, detail="无效的令牌")
+        return None
     
     user = db.query(User).filter(User.username == username).first()
     if user is None or not user.is_active:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
+        return None
     
     return user

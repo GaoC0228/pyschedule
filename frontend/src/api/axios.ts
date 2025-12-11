@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/python/api',  // 使用专属路径前缀，避免与其他服务冲突
   timeout: 300000, // 5分钟超时
   maxContentLength: 500 * 1024 * 1024, // 500MB
   maxBodyLength: 500 * 1024 * 1024, // 500MB

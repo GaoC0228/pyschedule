@@ -10,8 +10,10 @@ from datetime import datetime
 from typing import Optional
 
 # 执行日志根目录
+# __file__ = /app/utils/execution_log.py
+# dirname 2次得到 /app，再拼接 logs/execution
 EXECUTION_LOG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    os.path.dirname(os.path.dirname(__file__)),  # /app
     "logs",
     "execution"
 )
@@ -67,7 +69,8 @@ def read_execution_log(relative_path: str) -> Optional[str]:
         日志内容，如果文件不存在返回None
     """
     # 构建完整路径
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    # __file__ = /app/utils/execution_log.py, dirname 2次得到 /app
+    base_dir = os.path.dirname(os.path.dirname(__file__))
     filepath = os.path.join(base_dir, relative_path)
     
     if not os.path.exists(filepath):
@@ -90,7 +93,8 @@ def delete_execution_log(relative_path: str) -> bool:
     Returns:
         是否成功删除
     """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    # __file__ = /app/utils/execution_log.py, dirname 2次得到 /app
+    base_dir = os.path.dirname(os.path.dirname(__file__))
     filepath = os.path.join(base_dir, relative_path)
     
     if os.path.exists(filepath):

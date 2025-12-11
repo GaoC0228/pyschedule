@@ -90,6 +90,8 @@ const AuditLogs: React.FC = () => {
   const [logContent, setLogContent] = useState('');
   const [logLoading, setLogLoading] = useState(false);
   const [logFileRelative, setLogFileRelative] = useState<string | null>(null);
+  const [logFileHostPath, setLogFileHostPath] = useState<string | null>(null);
+  const [logFileInfo, setLogFileInfo] = useState<any>(null);
   const [isPartialLog, setIsPartialLog] = useState(false);
   const [loadingFullLog, setLoadingFullLog] = useState(false);
   const [currentAuditId, setCurrentAuditId] = useState<number | null>(null);
@@ -156,6 +158,8 @@ const AuditLogs: React.FC = () => {
         const logResponse = await api.get(`/audit/${id}/log`);
         setLogContent(logResponse.data.log_content || '暂无日志');
         setLogFileRelative(logResponse.data.log_file_relative);
+        setLogFileHostPath(logResponse.data.log_file_host_path);
+        setLogFileInfo(logResponse.data.file_info);
         setIsPartialLog(logResponse.data.is_partial || false);
       } catch (logError) {
         setLogContent('(加载日志失败)');
@@ -718,13 +722,56 @@ const AuditLogs: React.FC = () => {
                 <div>
                   <Text strong style={{ fontSize: 16 }}>执行日志</Text>
                   
-                  {logFileRelative && (
-                    <div style={{ marginTop: 12, marginBottom: 12 }}>
-                      <Text strong>日志文件: </Text>
-                      <Text code style={{ fontSize: 12 }}>{logFileRelative}</Text>
+                  {/* 日志文件详细信息 */}
+                  {logFileHostPath && (
+                    <div style={{ 
+                      marginTop: 16, 
+                      marginBottom: 16, 
+                      padding: 12, 
+                      background: '#f5f5f5', 
+                      borderRadius: 4,
+                      border: '1px solid #d9d9d9'
+                    }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text strong style={{ color: '#1890ff' }}>📁 宿主机路径：</Text>
+                        <Text code style={{ fontSize: 13, marginLeft: 8 }}>{logFileHostPath}</Text>
+                      </div>
+                      
+                      {logFileInfo && logFileInfo.exists && (
+                        <>
+                          <div style={{ display: 'flex', gap: 24, marginTop: 8, flexWrap: 'wrap' }}>
+                            <div>
+                              <Text type="secondary">文件大小：</Text>
+                              <Text strong style={{ marginLeft: 4 }}>
+                                {logFileInfo.size_mb > 1 
+                                  ? `${logFileInfo.size_mb} MB` 
+                                  : `${logFileInfo.size_kb} KB`}
+                              </Text>
+                            </div>
+                            
+                            {logFileInfo.line_count && (
+                              <div>
+                                <Text type="secondary">行数：</Text>
+                                <Text strong style={{ marginLeft: 4 }}>{logFileInfo.line_count.toLocaleString()} 行</Text>
+                              </div>
+                            )}
+                            
+                            <div>
+                              <Text type="secondary">创建时间：</Text>
+                              <Text strong style={{ marginLeft: 4 }}>{logFileInfo.created_at}</Text>
+                            </div>
+                            
+                            <div>
+                              <Text type="secondary">修改时间：</Text>
+                              <Text strong style={{ marginLeft: 4 }}>{logFileInfo.modified_at}</Text>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                   
+                  {/* 日志内容预览 */}
                   <div style={{ 
                     background: '#000', 
                     color: '#0f0', 
@@ -733,8 +780,7 @@ const AuditLogs: React.FC = () => {
                     fontFamily: 'monospace',
                     fontSize: 12,
                     maxHeight: 300,
-                    overflow: 'auto',
-                    marginTop: 12
+                    overflow: 'auto'
                   }}>
                     <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                       {logContent || '加载中...'}

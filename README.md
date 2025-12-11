@@ -40,7 +40,12 @@
 ### 🔧 工作区
 - ✅ **文件管理** - 多用户隔离的Python脚本工作区
 - ✅ **在线编辑器** - 支持Python、JSON、YAML、Text等多种文件类型
-- ✅ **集成终端** - 内置Web终端，支持实时命令执行
+- ✅ **WebSocket终端执行** - 所有脚本统一使用WebSocket执行，实时输出，可随时终止
+- ✅ **智能模式识别** - 自动检测脚本是否包含input()交互操作，智能选择执行模式
+- ✅ **双重执行模式** - 非交互式（自动关闭）vs 交互式（手动关闭，支持输入）
+- ✅ **执行状态提示** - 明显的✓成功/✗失败提示+退出码，用户清楚知道执行状态
+- ✅ **非阻塞执行** - 多用户并发执行互不影响，完全异步
+- ✅ **安全性扫描** - 执行前自动检测危险操作和数据库连接
 - ✅ **输出文件** - 自动管理任务输出的CSV、Excel、图表等文件
 - ✅ **Web SSH终端** - 完整的Shell访问权限（管理员专用）
 - ✅ **预装常用包** - pandas、numpy、openpyxl、pymongo、redis等开箱即用
@@ -104,6 +109,96 @@
 
 ## 🚀 快速开始
 
+### 前置要求
+- Docker & Docker Compose
+- 至少2GB内存
+- 端口3001（前端）、8088（后端）、3306（数据库）可用
+
+### ⚠️ 重要：外部Nginx配置
+
+如果使用外部Nginx代理，**必须添加WebSocket支持**，否则终端执行功能无法使用。
+
+#### 完整配置示例
+
+```nginx
+# ====================================================
+# Python定时任务管理平台 - 外部Nginx代理配置
+# ====================================================
+# 域名示例: jump.winteamiot.com
+# 说明: 使用 /python/ 统一前缀，避免与其他服务的 /api/ 路径冲突
+# ====================================================
+
+# Python执行服务 - 统一代理（前端 + 后端API）
+location /python/ {
+    # 代理到前端容器（端口3001）
+    proxy_pass http://192.168.31.214:3001/python/;
+    
+    # ========== 真实IP传递（重要）==========
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    
+    # ========== WebSocket支持（交互式终端需要）==========
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    
+    # ========== 超时设置 ==========
+    proxy_connect_timeout 75s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+    
+    # ========== 文件上传大小限制 ==========
+    client_max_body_size 100M;
+}
+```
+
+#### 路径说明
+
+- **前端访问**: `https://jump.winteamiot.com/python/`
+- **API访问**: `https://jump.winteamiot.com/python/api/auth/login`
+- **WebSocket**: `wss://jump.winteamiot.com/python/api/ws/terminal`
+
+**内部路由**：
+- `/python/` → 前端页面
+- `/python/api/` → 后端API（内部Nginx会转发到backend:8088/api/）
+
+**优点**：
+- ✅ 只需一个 location 配置
+- ✅ 避免与其他服务的 /api/ 冲突
+- ✅ WebSocket自动支持
+- ✅ 真实IP正确传递
+
+#### SSL/HTTPS配置（可选）
+
+```nginx
+# HTTPS服务器
+server {
+    listen 443 ssl http2;
+    server_name jump.winteamiot.com;
+    
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    
+    # SSL优化配置
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    
+    location /python/ {
+        proxy_pass http://192.168.31.214:3001/python/;
+        # ... 同上配置
+    }
+}
+
+# HTTP重定向到HTTPS
+server {
+    listen 80;
+    server_name jump.winteamiot.com;
+    return 301 https://$server_name$request_uri;
+}
+```
 ### 环境要求
 ```bash
 - Docker 20.10+
@@ -451,7 +546,7 @@ server: {
 }
 ```
 
-### Nginx配置 (nginx_production.conf)
+### 内置Nginx配置 (nginx_production.conf)
 ```nginx
 server {
     listen 80;
@@ -472,7 +567,30 @@ server {
 
 
 
+### 外部代理nginx配置
 
-
-
-
+```nginx
+  location /python/ {
+        proxy_pass http://192.168.31.214:3001/python/;
+        
+        # ========== 关键！WebSocket支持 ==========
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;  # 或 "upgrade"
+        
+        # ========== 基本头部 ==========
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # ========== 超时设置（WebSocket需要）==========
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        
+        # 文件上传
+        client_max_body_size 100M;
+  }
+        
+```

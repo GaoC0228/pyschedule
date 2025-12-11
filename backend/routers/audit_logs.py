@@ -278,6 +278,7 @@ def get_execution_log(
     trigger_type = "unknown"
     log_file_path = ""
     log_file_relative = None
+    log_file_host_path = None  # 宿主机路径
     is_partial = False
     file_info = {"exists": False}
     
@@ -289,31 +290,50 @@ def get_execution_log(
         
         if log_file:
             # 构建完整路径检查文件
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            # __file__ = /app/routers/audit_logs.py, dirname 2次得到 /app
+            base_dir = os.path.dirname(os.path.dirname(__file__))
             full_path = os.path.join(base_dir, log_file)
             
             if os.path.exists(full_path):
+                from datetime import datetime
+                import stat
+                
                 file_size = os.path.getsize(full_path)
+                file_stat = os.stat(full_path)
+                
                 file_info = {
                     "exists": True,
                     "size_bytes": file_size,
+                    "size_kb": round(file_size / 1024, 2),
                     "size_mb": round(file_size / (1024 * 1024), 2),
-                    "is_large": file_size > 1024 * 1024
+                    "is_large": file_size > 1024 * 1024,
+                    "created_at": datetime.fromtimestamp(file_stat.st_ctime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "modified_at": datetime.fromtimestamp(file_stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "line_count": None  # 稍后计算
                 }
                 
-                # 获取相对路径
+                # 获取相对路径（容器内）
                 log_file_relative = log_file
+                
+                # 获取宿主机相对路径（去掉容器内的/app前缀）
+                # 容器内路径: logs/execution/xxx.log
+                # 宿主机路径: v2/logs/execution/xxx.log
+                log_file_host_path = f"v2/{log_file}"
                 
                 # 读取日志内容
                 log_content = read_execution_log(log_file)
                 if log_content is None:
                     log_content = "(日志文件不存在或已被删除)"
-                elif not full and len(log_content) > 50000:  # 如果内容超过50KB
-                    # 只显示最后100行
+                else:
+                    # 计算行数
                     lines = log_content.split('\n')
-                    if len(lines) > 100:
-                        log_content = "⚠️ 日志内容较大，仅显示最后100行\n" + "="*80 + "\n\n" + '\n'.join(lines[-100:])
-                        is_partial = True
+                    file_info["line_count"] = len(lines)
+                    
+                    if not full and len(log_content) > 50000:  # 如果内容超过50KB
+                        # 只显示最后100行
+                        if len(lines) > 100:
+                            log_content = "⚠️ 日志内容较大，仅显示最后100行\n" + "="*80 + "\n\n" + '\n'.join(lines[-100:])
+                            is_partial = True
             else:
                 log_content = "(日志文件不存在或已被删除)"
         else:
@@ -328,9 +348,10 @@ def get_execution_log(
         "status": audit_log.status,
         "trigger_type": trigger_type,
         "log_content": log_content,
-        "log_file_relative": log_file_relative,  # 新增：日志文件相对路径
-        "is_partial": is_partial,  # 新增：是否只是部分日志
-        "file_info": file_info  # 新增：文件信息
+        "log_file_relative": log_file_relative,  # 容器内相对路径
+        "log_file_host_path": log_file_host_path,  # 宿主机相对路径
+        "is_partial": is_partial,  # 是否只是部分日志
+        "file_info": file_info  # 文件详细信息
     }
 
 

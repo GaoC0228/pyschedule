@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal } from 'antd';
+import { Modal, Button, message } from 'antd';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -10,6 +10,7 @@ interface TerminalModalProps {
   scriptName: string;
   onClose: () => void;
   onLog?: (message: string) => void;
+  executionMode?: 'auto' | 'interactive'; // auto: 自动执行并提示, interactive: 交互式
 }
 
 const TerminalModal: React.FC<TerminalModalProps> = ({
@@ -17,7 +18,8 @@ const TerminalModal: React.FC<TerminalModalProps> = ({
   scriptPath,
   scriptName,
   onClose,
-  onLog
+  onLog,
+  executionMode = 'interactive'
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const [terminal, setTerminal] = useState<Terminal | null>(null);
@@ -67,28 +69,36 @@ const TerminalModal: React.FC<TerminalModalProps> = ({
       // 判断是否通过代理访问（如Nginx）
       let wsUrl;
       if (host.includes(':3001')) {
-        // 直接访问开发服务器
+        // 直接访问开发服务器（需要加/api前缀）
         const apiHost = host.replace(':3001', ':8088');
-        wsUrl = `${protocol}//${apiHost}/ws/terminal/${sessionId}?token=${token}`;
+        wsUrl = `${protocol}//${apiHost}/api/ws/terminal/${sessionId}?token=${token}`;
       } else {
         // 通过域名/代理访问（如通过Nginx的/python路径）
         const basePath = window.location.pathname.startsWith('/python') ? '/python/api' : '/api';
         wsUrl = `${protocol}//${host}${basePath}/ws/terminal/${sessionId}?token=${token}`;
       }
       
+      console.log('=== WebSocket 连接信息 ===');
       console.log('WebSocket URL:', wsUrl);
+      console.log('Token:', token ? '已设置' : '未设置');
+      console.log('Session ID:', sessionId);
+      console.log('========================');
+      
       const websocket = new WebSocket(wsUrl);
 
       websocket.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('✅ WebSocket connected');
+        term.writeln('\r\n\x1b[32m[系统] WebSocket连接已建立\x1b[0m\r\n');
         setConnected(true);
         
-        // 发送启动命令
+        // 发送启动命令（带执行模式）
+        console.log('发送启动命令:', { scriptPath, executionMode });
         websocket.send(JSON.stringify({
           type: 'start',
           script_path: scriptPath,
           cols: term.cols,
-          rows: term.rows
+          rows: term.rows,
+          execution_mode: executionMode
         }));
       };
 
@@ -108,10 +118,34 @@ const TerminalModal: React.FC<TerminalModalProps> = ({
             onLog('[系统] ' + msg);
           }
         } else if (message.type === 'exit') {
-          const msg = '进程已结束';
-          term.writeln('\r\n\x1b[33m' + msg + '\x1b[0m\r\n');
+          const returnCode = message.returncode || 0;
+          const success = returnCode === 0;
+          
+          // 显示明显的完成提示
+          term.writeln('\r\n');
+          term.writeln('='.repeat(60));
+          if (success) {
+            term.writeln('\x1b[32m✓ 脚本执行成功完成\x1b[0m');
+          } else {
+            term.writeln(`\x1b[31m✗ 脚本执行失败 (退出码: ${returnCode})\x1b[0m`);
+          }
+          term.writeln('='.repeat(60));
+          
+          if (executionMode === 'auto') {
+            // 自动执行模式：显示提示并3秒后关闭
+            term.writeln('\r\n\x1b[33m终端将在 3 秒后自动关闭...\x1b[0m');
+            term.writeln('\x1b[33m（或点击"关闭"按钮立即关闭）\x1b[0m\r\n');
+            
+            setTimeout(() => {
+              onClose();
+            }, 3000);
+          } else {
+            // 交互式模式：只显示提示
+            term.writeln('\r\n\x1b[33m可以关闭终端窗口\x1b[0m\r\n');
+          }
+          
           if (onLog) {
-            onLog('[系统] ' + msg);
+            onLog(`[系统] 脚本执行${success ? '成功' : '失败'}完成`);
           }
         } else if (message.type === 'error') {
           const msg = `错误: ${message.message}`;
@@ -123,13 +157,31 @@ const TerminalModal: React.FC<TerminalModalProps> = ({
       };
 
       websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        term.writeln('\r\n\x1b[31mWebSocket连接错误\x1b[0m\r\n');
+        console.error('❌ WebSocket error:', error);
+        console.error('WebSocket URL:', wsUrl);
+        term.writeln('\r\n\x1b[31m========================================\x1b[0m\r\n');
+        term.writeln('\x1b[31mWebSocket连接错误\x1b[0m\r\n');
+        term.writeln('\x1b[31m========================================\x1b[0m\r\n');
+        term.writeln('\x1b[31m请检查:\x1b[0m\r\n');
+        term.writeln('\x1b[31m1. 您的token是否有效（可能已过期）\x1b[0m\r\n');
+        term.writeln('\x1b[31m2. 网络连接是否正常\x1b[0m\r\n');
+        term.writeln('\x1b[31m3. 按F12打开开发者工具查看详细错误\x1b[0m\r\n');
+        term.writeln('\x1b[31m========================================\x1b[0m\r\n');
+        message.error('WebSocket连接失败，请按F12查看详细错误');
       };
 
-      websocket.onclose = () => {
-        console.log('WebSocket closed');
+      websocket.onclose = (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
         setConnected(false);
+        
+        // 如果是非正常关闭，显示错误信息
+        if (event.code !== 1000 && event.code !== 1001) {
+          term.writeln(`\r\n\x1b[31mWebSocket连接异常关闭 (code: ${event.code})\x1b[0m\r\n`);
+          if (event.reason) {
+            term.writeln(`\x1b[31m原因: ${event.reason}\x1b[0m\r\n`);
+          }
+          message.error(`WebSocket连接关闭: ${event.code}`);
+        }
       };
 
       // 处理用户输入

@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   DeleteOutlined, WarningOutlined, ReloadOutlined,
-  FileTextOutlined, DatabaseOutlined, ClockCircleOutlined
+  FileTextOutlined, DatabaseOutlined, ClockCircleOutlined, FileOutlined
 } from '@ant-design/icons';
 import api from '../api/axios';
 
@@ -123,30 +123,9 @@ const AuditCleaner: React.FC = () => {
     });
   };
 
-  // 清理孤儿文件
-  const handleCleanOrphanFiles = async () => {
-    Modal.confirm({
-      title: '清理孤儿文件',
-      icon: <WarningOutlined />,
-      content: '清理数据库中没有记录的日志文件，这些文件可能是由于删除操作或异常情况产生的。',
-      okText: '确认清理',
-      cancelText: '取消',
-      onOk: async () => {
-        setLoading(true);
-        try {
-          const response = await api.post('/audit-cleaner/clean-orphan-files');
-          if (response.data.success) {
-            message.success(response.data.message);
-            loadStatistics();
-          }
-        } catch (error: any) {
-          message.error('清理失败: ' + (error.response?.data?.detail || error.message));
-        } finally {
-          setLoading(false);
-        }
-      }
-    });
-  };
+  // 清理孤儿文件功能已移除
+  // 原因：逻辑不完善，可能误删定时任务的日志文件
+  // 如需清理，请在宿主机上手动操作
 
   return (
     <div style={{ padding: 24 }}>
@@ -161,36 +140,40 @@ const AuditCleaner: React.FC = () => {
             <>
               <Row gutter={16}>
                 <Col span={6}>
-                  <Card>
+                  <Card bordered={false}>
                     <Statistic
-                      title="总记录数"
+                      title={<span style={{ fontSize: 14, whiteSpace: 'nowrap' }}>总记录数</span>}
                       value={stats.total_logs}
                       prefix={<DatabaseOutlined />}
+                      valueStyle={{ fontSize: 24 }}
                     />
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card>
+                  <Card bordered={false}>
                     <Statistic
-                      title="日志文件数"
+                      title={<span style={{ fontSize: 14, whiteSpace: 'nowrap' }}>日志文件数</span>}
                       value={stats.log_files.count}
                       prefix={<FileTextOutlined />}
+                      valueStyle={{ fontSize: 24 }}
                     />
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card>
+                  <Card bordered={false}>
                     <Statistic
-                      title="占用空间"
+                      title={<span style={{ fontSize: 14, whiteSpace: 'nowrap' }}>占用空间</span>}
                       value={stats.log_files.total_size_mb}
                       suffix="MB"
+                      prefix={<FileOutlined />}
+                      valueStyle={{ fontSize: 24 }}
                     />
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card>
+                  <Card bordered={false}>
                     <Statistic
-                      title="时间跨度"
+                      title={<span style={{ fontSize: 14, whiteSpace: 'nowrap' }}>时间跨度</span>}
                       value={stats.date_range.oldest ? (
                         new Date(stats.date_range.newest).getTime() - 
                         new Date(stats.date_range.oldest).getTime()
@@ -198,6 +181,7 @@ const AuditCleaner: React.FC = () => {
                       suffix="天"
                       precision={0}
                       prefix={<ClockCircleOutlined />}
+                      valueStyle={{ fontSize: 24 }}
                     />
                   </Card>
                 </Col>
@@ -265,6 +249,26 @@ const AuditCleaner: React.FC = () => {
 
               <Divider />
 
+              {/* 日志文件位置说明 */}
+              <Alert
+                message="📁 日志文件位置"
+                description={
+                  <div>
+                    <p><strong>宿主机路径：</strong></p>
+                    <ul style={{ marginBottom: 8, paddingLeft: 20 }}>
+                      <li><code>/opt/soft/exec_python_web/v2/logs/execution/</code> - 工作区执行日志和交互式终端日志</li>
+                      <li><code>/opt/soft/exec_python_web/v2/logs/tasks/*/</code> - 定时任务执行日志</li>
+                    </ul>
+                    <p style={{ marginBottom: 0 }}>
+                      <strong>查看日志：</strong>在宿主机上直接访问上述目录即可查看、备份或手动清理日志文件
+                    </p>
+                  </div>
+                }
+                type="success"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+
               {/* 清理操作 */}
               <Alert
                 message="清理建议"
@@ -296,12 +300,7 @@ const AuditCleaner: React.FC = () => {
                 >
                   按数量清理
                 </Button>
-                <Button
-                  icon={<FileTextOutlined />}
-                  onClick={handleCleanOrphanFiles}
-                >
-                  清理孤儿文件
-                </Button>
+                {/* 清理孤儿文件按钮已移除 - 功能风险太大 */}
               </Space>
             </>
           )}

@@ -24,7 +24,7 @@ const WebTerminal: React.FC<WebTerminalProps> = ({ onClose }) => {
     const term = xtermRef.current;
     const token = localStorage.getItem('token');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws/web-terminal?token=${token}&cols=${term.cols}&rows=${term.rows}`;
+    const wsUrl = `${protocol}//${window.location.host}/python/api/ws/web-terminal?token=${token}&cols=${term.cols}&rows=${term.rows}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

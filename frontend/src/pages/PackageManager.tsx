@@ -19,7 +19,7 @@ import {
   ReloadOutlined,
   InfoCircleOutlined
 } from '@ant-design/icons';
-import axios from 'axios';
+import api from '../api/axios';
 
 const { Search, TextArea } = Input;
 
@@ -42,11 +42,8 @@ const PackageManager: React.FC = () => {
   const loadPackages = async (search = '') => {
     setLoading(true);
     try {
-      const response = await axios.get('/api/packages/installed', {
-        params: { search },
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`
-        }
+      const response = await api.get('/packages/installed', {
+        params: { search }
       });
 
       if (response.data.success) {
@@ -78,16 +75,11 @@ const PackageManager: React.FC = () => {
   const handleInstall = async (values: any) => {
     setInstalling(true);
     try {
-      const response = await axios.post(
-        '/api/packages/install',
+      const response = await api.post(
+        '/packages/install',
         {
           package_name: values.package_name,
           version: values.version || null
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`
-          }
         }
       );
 
@@ -129,14 +121,9 @@ const PackageManager: React.FC = () => {
 
     setInstalling(true);
     try {
-      const response = await axios.post(
-        '/api/packages/batch-install',
-        { packages: packageList },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`
-          }
-        }
+      const response = await api.post(
+        '/packages/batch-install',
+        { packages: packageList }
       );
 
       const { success, results } = response.data;
@@ -181,14 +168,9 @@ const PackageManager: React.FC = () => {
   // 卸载包
   const handleUninstall = async (packageName: string) => {
     try {
-      const response = await axios.post(
-        '/api/packages/uninstall',
-        { package_name: packageName },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`
-          }
-        }
+      const response = await api.post(
+        '/packages/uninstall',
+        { package_name: packageName }
       );
 
       if (response.data.success) {

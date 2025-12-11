@@ -128,54 +128,10 @@ class AuditCleaner:
             "min_keep_id": min_keep_id
         }
     
-    def clean_orphan_files(self) -> dict:
-        """
-        清理孤儿日志文件（数据库中没有记录的文件）
-        
-        Returns:
-            清理统计信息
-        """
-        from utils.execution_log import EXECUTION_LOG_DIR
-        
-        if not os.path.exists(EXECUTION_LOG_DIR):
-            return {"deleted_files": 0, "message": "日志目录不存在"}
-        
-        # 获取所有数据库中的日志文件路径
-        all_logs = self.db.query(AuditLog).all()
-        valid_files = set()
-        
-        for log in all_logs:
-            if log.details:
-                try:
-                    details = json.loads(log.details)
-                    log_file = details.get("log_file")
-                    if log_file:
-                        # 提取文件名
-                        filename = os.path.basename(log_file)
-                        valid_files.add(filename)
-                except Exception:
-                    pass
-        
-        # 扫描日志目录
-        deleted_files = 0
-        total_size = 0
-        
-        for filename in os.listdir(EXECUTION_LOG_DIR):
-            if filename not in valid_files and filename.endswith('.log'):
-                filepath = os.path.join(EXECUTION_LOG_DIR, filename)
-                try:
-                    file_size = os.path.getsize(filepath)
-                    os.remove(filepath)
-                    deleted_files += 1
-                    total_size += file_size
-                    logger.info(f"删除孤儿文件: {filename}")
-                except Exception as e:
-                    logger.warning(f"删除孤儿文件失败 {filename}: {e}")
-        
-        return {
-            "deleted_files": deleted_files,
-            "freed_space_mb": round(total_size / 1024 / 1024, 2)
-        }
+    # clean_orphan_files 功能已移除
+    # 原因：逻辑不完善，只检查 AuditLog 表，可能误删定时任务（TaskExecution表）的日志
+    # 风险太大，日志删除后无法恢复
+    # 建议：管理员在宿主机上手动清理不需要的日志文件
     
     def get_statistics(self) -> dict:
         """

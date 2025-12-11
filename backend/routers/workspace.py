@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
@@ -35,6 +35,37 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 # 权限管理器
 workspace_permissions = WorkspacePermissions(WORKSPACE_DIR)
+
+
+def detect_interactive_script(file_path: str) -> bool:
+    """
+    检测脚本是否包含交互式操作
+    返回True表示是交互式脚本，False表示非交互式
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 检测交互式操作特征
+        interactive_patterns = [
+            'input(',           # Python 3的input
+            'raw_input(',       # Python 2的raw_input
+            'getpass.getpass(', # 密码输入
+            'sys.stdin.read',   # 标准输入读取
+            'click.prompt(',    # click库的提示输入
+            'inquirer.',        # inquirer交互式问答库
+        ]
+        
+        for pattern in interactive_patterns:
+            if pattern in content:
+                logger.info(f"检测到交互式特征: {pattern} in {file_path}")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"检测交互式脚本失败: {str(e)}")
+        return False
 
 
 def check_path_permission(current_user: User, file_path: str, require_write: bool = False):
@@ -205,7 +236,11 @@ async def analyze_script(
         # 分析脚本
         analysis_result = ScriptAnalyzer.analyze_script(script_content, db)
         
-        logger.info(f"用户 {current_user.username} 分析脚本: {file_path}, 风险等级: {analysis_result['risk_level']}")
+        # 检测是否为交互式脚本
+        is_interactive = detect_interactive_script(full_path)
+        analysis_result['is_interactive'] = is_interactive
+        
+        logger.info(f"用户 {current_user.username} 分析脚本: {file_path}, 风险等级: {analysis_result['risk_level']}, 交互式: {is_interactive}")
         
         return analysis_result
         
@@ -214,14 +249,96 @@ async def analyze_script(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _execute_script_in_background(audit_log_id: int, full_path: str, file_path: str, start_time: datetime, user_id: int):
+    """后台执行脚本的函数"""
+    from database import SessionLocal
+    from models import AuditLog
+    import json
+    
+    db = SessionLocal()
+    try:
+        # 设置环境变量
+        env = os.environ.copy()
+        env['PYTHONPATH'] = f"/app:{env.get('PYTHONPATH', '')}"
+        
+        result = subprocess.run(
+            ["python", full_path],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5分钟超时
+            cwd=os.path.dirname(full_path),
+            env=env
+        )
+        
+        status = "success" if result.returncode == 0 else "failed"
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        # 保存执行日志到文件
+        from utils.execution_log import save_execution_log
+        log_content = f"=== 标准输出 ===\n{result.stdout or '(无输出)'}\n\n=== 错误输出 ===\n{result.stderr or '(无错误)'}\n\n=== 执行信息 ===\n退出码: {result.returncode}\n执行时长: {duration}秒\n"
+        log_file_path = save_execution_log(
+            audit_log_id=audit_log_id,
+            script_name=os.path.basename(file_path),
+            trigger_type="manual",
+            content=log_content
+        )
+        
+        # 更新审计日志
+        db_audit_log = db.query(AuditLog).filter(AuditLog.id == audit_log_id).first()
+        if db_audit_log:
+            db_audit_log.status = status
+            db_audit_log.execution_duration = duration
+            details = json.loads(db_audit_log.details) if db_audit_log.details else {}
+            details.update({
+                "log_file": log_file_path,
+                "returncode": result.returncode,
+                "has_output": bool(result.stdout),
+                "has_error": bool(result.stderr)
+            })
+            db_audit_log.details = json.dumps(details, ensure_ascii=False)
+            db.commit()
+            
+        logger.info(f"后台脚本执行完成: {file_path}, 状态: {status}, 时长: {duration}秒")
+        
+    except subprocess.TimeoutExpired:
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        db_audit_log = db.query(AuditLog).filter(AuditLog.id == audit_log_id).first()
+        if db_audit_log:
+            db_audit_log.status = "failed"
+            db_audit_log.execution_duration = duration
+            details = json.loads(db_audit_log.details) if db_audit_log.details else {}
+            details["error"] = "执行超时"
+            db_audit_log.details = json.dumps(details, ensure_ascii=False)
+            db.commit()
+            
+        logger.warning(f"后台脚本执行超时: {file_path}")
+        
+    except Exception as e:
+        logger.error(f"后台脚本执行异常: {file_path}, 错误: {str(e)}")
+        
+        db_audit_log = db.query(AuditLog).filter(AuditLog.id == audit_log_id).first()
+        if db_audit_log:
+            db_audit_log.status = "failed"
+            details = json.loads(db_audit_log.details) if db_audit_log.details else {}
+            details["error"] = str(e)
+            db_audit_log.details = json.dumps(details, ensure_ascii=False)
+            db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/execute")
 async def execute_script(
     file_path: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """执行Python脚本（带权限控制）"""
+    """执行Python脚本（异步非阻塞，立即返回，带权限控制）"""
     try:
         # 权限检查
         full_path = check_path_permission(current_user, file_path, require_write=False)
@@ -232,118 +349,51 @@ async def execute_script(
         if not full_path.endswith('.py'):
             raise HTTPException(status_code=400, detail="只能执行Python脚本")
         
-        # 执行脚本
-        logger.info(f"用户 {current_user.username} 执行脚本: {file_path}")
+        logger.info(f"用户 {current_user.username} 启动脚本执行（异步）: {file_path}")
         
         start_time = datetime.now()
-        status = "success"
-        error_msg = None
         
-        try:
-            # 设置环境变量，让用户脚本可以导入backend的公共模块
-            env = os.environ.copy()
-            env['PYTHONPATH'] = f"/app:{env.get('PYTHONPATH', '')}"
-            
-            result = subprocess.run(
-                ["python", full_path],
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5分钟超时
-                cwd=os.path.dirname(full_path),
-                env=env
-            )
-            
-            status = "success" if result.returncode == 0 else "failed"
-            
-            # 计算执行时长
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            # 创建审计日志
-            audit_log = create_audit_log(
-                db=db,
-                user=current_user,
-                action=AuditAction.WORKSPACE_EXECUTE,
-                resource_type=ResourceType.SCRIPT,
-                script_name=os.path.basename(file_path),
-                script_path=file_path,
-                status=status,
-                execution_duration=duration,
-                details={
-                    "file_path": file_path, 
-                    "trigger_type": "manual",
-                    "returncode": result.returncode,
-                    "has_output": bool(result.stdout),
-                    "has_error": bool(result.stderr),
-                    "log_file": ""  # 稍后更新
-                },
-                ip_address=get_real_ip(request)
-            )
-            
-            # 保存执行日志到文件
-            from utils.execution_log import save_execution_log
-            log_content = f"=== 标准输出 ===\n{result.stdout or '(无输出)'}\n\n=== 错误输出 ===\n{result.stderr or '(无错误)'}\n\n=== 执行信息 ===\n退出码: {result.returncode}\n执行时长: {duration}秒\n"
-            log_file_path = save_execution_log(
-                audit_log_id=audit_log.id,
-                script_name=os.path.basename(file_path),
-                trigger_type="manual",
-                content=log_content
-            )
-            
-            # 更新审计日志，添加日志文件路径
-            from models import AuditLog
-            db_audit_log = db.query(AuditLog).filter(AuditLog.id == audit_log.id).first()
-            if db_audit_log:
-                import json
-                details = json.loads(db_audit_log.details) if db_audit_log.details else {}
-                details["log_file"] = log_file_path
-                db_audit_log.details = json.dumps(details, ensure_ascii=False)
-                db.commit()
-            
-            return {
-                "success": result.returncode == 0,
-                "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "executed_by": current_user.username,
-                "executed_at": end_time.isoformat(),
-                "duration": duration
-            }
-            
-        except subprocess.TimeoutExpired:
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            # 记录超时日志
-            create_audit_log(
-                db=db,
-                user=current_user,
-                action=AuditAction.WORKSPACE_EXECUTE,
-                resource_type=ResourceType.SCRIPT,
-                script_name=os.path.basename(file_path),
-                script_path=file_path,
-                status="failed",
-                execution_duration=duration,
-                details={
-                    "file_path": file_path, 
-                    "trigger_type": "manual",
-                    "error": "执行超时"
-                },
-                ip_address=get_real_ip(request)
-            )
-            
-            return {
-                "success": False,
-                "returncode": -1,
-                "stdout": "",
-                "stderr": "脚本执行超时（超过5分钟）",
-                "executed_by": current_user.username,
-                "executed_at": end_time.isoformat(),
-                "duration": duration
-            }
+        # 创建审计日志（状态为running）
+        audit_log = create_audit_log(
+            db=db,
+            user=current_user,
+            action=AuditAction.WORKSPACE_EXECUTE,
+            resource_type=ResourceType.SCRIPT,
+            script_name=os.path.basename(file_path),
+            script_path=file_path,
+            status="running",
+            details={
+                "file_path": file_path, 
+                "trigger_type": "manual",
+                "log_file": ""
+            },
+            ip_address=get_real_ip(request)
+        )
+        db.commit()
+        
+        # 将脚本执行任务添加到后台任务队列
+        background_tasks.add_task(
+            _execute_script_in_background,
+            audit_log.id,
+            full_path,
+            file_path,
+            start_time,
+            current_user.id
+        )
+        
+        # 立即返回响应（脚本在后台执行）
+        return {
+            "success": True,
+            "message": "脚本已开始在后台执行",
+            "audit_log_id": audit_log.id,
+            "file_path": file_path,
+            "started_at": start_time.isoformat(),
+            "status": "running",
+            "tip": "请在审计日志页面查看执行结果"
+        }
             
     except Exception as e:
-        logger.error(f"执行脚本失败: {str(e)}")
+        logger.error(f"启动脚本执行失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

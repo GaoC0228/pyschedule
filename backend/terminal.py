@@ -108,6 +108,22 @@ class Terminal:
         except OSError:
             return False
     
+    def get_exit_status(self) -> int:
+        """获取进程退出码（仅在进程结束后调用）"""
+        if not self.pid:
+            return -1
+        
+        try:
+            # 非阻塞检查进程状态
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid == self.pid:
+                # 进程已结束，返回退出码
+                return os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+        except:
+            pass
+        
+        return 0
+    
     def kill(self):
         """终止终端进程"""
         if self.pid:

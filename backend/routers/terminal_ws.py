@@ -39,7 +39,7 @@ def get_websocket_client_ip(websocket: WebSocket) -> str:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 # 工作区目录
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "work")
@@ -59,18 +59,22 @@ async def terminal_websocket(
 ):
     """WebSocket终端连接"""
     await websocket.accept()
-    
-    # 验证token并获取用户
-    current_user = await get_current_user_ws(websocket, db)
-    if not current_user:
-        await websocket.send_json({'type': 'error', 'message': '未授权'})
-        await websocket.close()
-        return
-    
-    terminal = None
-    script_path = None
-    
     try:
+        # 用户认证
+        current_user = await get_current_user_ws(websocket, db)
+        
+        if not current_user:
+            logger.warning(f"未授权的WebSocket连接尝试: session={session_id}")
+            try:
+                await websocket.send_json({
+                    'type': 'error',
+                    'message': 'Token无效或已过期，请重新登录'
+                })
+            except:
+                pass
+            await websocket.close(code=1008)
+            return
+        
         logger.info(f"WebSocket连接建立: session={session_id}, user={current_user.username}")
         
         # 等待客户端发送启动命令
@@ -86,6 +90,8 @@ async def terminal_websocket(
                     script_path = message.get('script_path')
                     cols = message.get('cols', 80)
                     rows = message.get('rows', 24)
+                    # 获取执行模式：auto（自动执行并关闭）或 interactive（交互式）
+                    execution_mode = message.get('execution_mode', 'interactive')
                     
                     logger.info(f"启动终端: script={script_path}, user={current_user.username}")
                     
@@ -109,6 +115,9 @@ async def terminal_websocket(
                                 audit_log = existing_log
                             else:
                                 # 创建新记录
+                                # 根据execution_mode设置trigger_type
+                                trigger_type = "interactive" if execution_mode == "interactive" else "manual"
+                                
                                 audit_log = create_audit_log(
                                     db=db,
                                     user=current_user,
@@ -119,7 +128,8 @@ async def terminal_websocket(
                                     status="running",
                                     details={
                                         "file_path": script_path,
-                                        "trigger_type": "interactive",
+                                        "trigger_type": trigger_type,
+                                        "execution_mode": execution_mode,
                                         "session_id": session_id,
                                         "log_file": ""
                                     },
@@ -130,7 +140,8 @@ async def terminal_websocket(
                                 'audit_log_id': audit_log.id,
                                 'transcript': [],
                                 'start_time': datetime.now(),
-                                'script_path': script_path or ''
+                                'script_path': script_path or '',
+                                'execution_mode': execution_mode
                             }
                         
                         await websocket.send_json({
@@ -200,9 +211,11 @@ async def terminal_websocket(
         
         # 发送进程结束消息
         if terminal and not terminal.is_alive():
+            returncode = terminal.get_exit_status()
             await websocket.send_json({
                 'type': 'exit',
-                'message': '进程已结束'
+                'message': '进程已结束',
+                'returncode': returncode
             })
         
     except Exception as e:

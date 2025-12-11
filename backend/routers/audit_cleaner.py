@@ -115,30 +115,6 @@ def clean_by_count(
         raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
 
 
-@router.post("/clean-orphan-files")
-def clean_orphan_files(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    清理孤儿日志文件
-    删除数据库中没有记录的日志文件
-    """
-    # 只有管理员可以清理
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="权限不足")
-    
-    try:
-        cleaner = AuditCleaner(db)
-        result = cleaner.clean_orphan_files()
-        
-        logger.info(f"管理员 {current_user.username} 执行了孤儿文件清理")
-        
-        return {
-            "success": True,
-            "message": f"清理完成，删除了 {result['deleted_files']} 个孤儿文件",
-            "data": result
-        }
-    except Exception as e:
-        logger.error(f"清理孤儿文件失败: {e}")
-        raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
+# 清理孤儿文件功能已移除（风险太大，可能误删有效日志）
+# 如需清理日志文件，请在宿主机上手动删除：
+# rm -f /opt/soft/exec_python_web/v2/logs/execution/*.log
