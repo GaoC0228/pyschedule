@@ -8,6 +8,40 @@
 
 ---
 
+## 界面截图
+
+登录图片
+![alt text](docs/images/login.png)
+
+首页仪表盘图片
+![alt text](docs/images/dashboard.png)
+
+定时任务管理页面图片
+![alt text](docs/images/tasks.png)
+
+工作区图片
+![alt text](docs/images/workspace.png)
+
+数据库配置图片
+![alt text](docs/images/database-config.png)
+
+包管理图片
+![alt text](docs/images/package-management.png)
+
+用户管理图片
+![alt text](docs/images/user-management.png)
+
+审计日志图片
+![alt text](docs/images/audit-logs.png)
+
+日志清理图片
+![alt text](docs/images/log-cleanup.png)
+
+web终端图片
+![alt text](docs/images/web-terminal.png)
+
+---
+
 ## 📑 文档导航
 
 📄 **本文档** - 项目介绍、功能特性、技术栈、项目结构  
