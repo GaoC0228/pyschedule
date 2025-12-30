@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Card, Button, Upload, message, Space, Tag,
-  Breadcrumb, Input, Typography, List, Spin, Modal, Checkbox, Dropdown 
+  Breadcrumb, Input, Typography, List, Spin, Modal, Checkbox, Dropdown, Tree 
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
-  FolderOutlined, FileOutlined, UploadOutlined, 
+  FolderOutlined, FileOutlined, UploadOutlined, CopyOutlined, 
   PlayCircleOutlined, DeleteOutlined, PlusOutlined,
   ReloadOutlined, DownloadOutlined, ClearOutlined,
   FolderOpenOutlined, CodeOutlined, EditOutlined, FileAddOutlined,
@@ -60,6 +60,11 @@ const Workspace: React.FC = () => {
   const [wordViewerFile, setWordViewerFile] = useState<{ path: string; name: string } | null>(null);
   const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
   const [pdfViewerFile, setPdfViewerFile] = useState<{ path: string; name: string } | null>(null);
+  const [dragOverItem, setDragOverItem] = useState<string | null>(null);
+  const [moveTargetVisible, setMoveTargetVisible] = useState(false);
+  const [targetDirectory, setTargetDirectory] = useState<string>("");
+  const [copyTargetVisible, setCopyTargetVisible] = useState(false);
+  const [copyTargetDirectory, setCopyTargetDirectory] = useState<string>("");
   const consoleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -403,6 +408,285 @@ const Workspace: React.FC = () => {
     }
   };
 
+  // 拖拽移动相关函数
+  const handleDragStart = (e: React.DragEvent, filePath: string) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', filePath);
+    
+    // 如果拖拽的项目在选中列表中，拖拽所有选中项
+    if (!selectedItems.includes(filePath)) {
+      setSelectedItems([filePath]);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetPath: string, isDirectory: boolean) => {
+    if (!isDirectory) return;
+    
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverItem(targetPath);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverItem(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetPath: string) => {
+    e.preventDefault();
+    setDragOverItem(null);
+    
+    
+    // 检查是否拖拽到自身
+    if (selectedItems.includes(targetPath)) {
+      message.warning('不能将文件夹移动到自身');
+      return;
+    }
+    
+    // 执行移动
+    await handleMoveFiles(targetPath);
+  };
+
+  const handleMoveFiles = async (targetDir: string) => {
+    if (selectedItems.length === 0) {
+      message.warning('请先选择要移动的文件');
+      return;
+    }
+
+    addConsoleLog(`移动 ${selectedItems.length} 个项目到: ${targetDir || '根目录'}`, 'info');
+
+    try {
+      const response = await axios.post('/workspace/move', {
+        source_paths: selectedItems,
+        target_dir: targetDir
+      });
+
+      const { moved_items, failed_items } = response.data;
+
+      if (failed_items && failed_items.length > 0) {
+        failed_items.forEach((item: any) => {
+          addConsoleLog(`✗ 移动失败: ${item.path} - ${item.error}`, 'error');
+        });
+      }
+
+      if (moved_items && moved_items.length > 0) {
+        message.success(`成功移动 ${moved_items.length} 个项目`);
+        addConsoleLog(`✓ 成功移动 ${moved_items.length} 个项目`, 'success');
+      }
+
+      setSelectedItems([]);
+      setMoveTargetVisible(false);
+      setTargetDirectory('');
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '移动失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+
+  // 构建树形数据
+  const buildTreeData = (): any[] => {
+    const dirs = getDirectoryList();
+    const treeMap: any = {};
+    
+    // 根节点
+    treeMap[''] = {
+      title: '📁 根目录',
+      key: '',
+      children: []
+    };
+    
+    // 构建所有节点
+    dirs.forEach(dir => {
+      if (dir === '') return;
+      
+      const parts = dir.split('/');
+      const title = parts[parts.length - 1];
+      const isCurrentDir = dir === currentPath;
+      const parentPath = parts.slice(0, -1).join('/');
+      
+      treeMap[dir] = {
+        title: isCurrentDir ? `📂 ${title} (当前)` : `📁 ${title}`,
+        key: dir,
+        children: []
+      };
+      
+      // 添加到父节点
+      if (treeMap[parentPath]) {
+        treeMap[parentPath].children.push(treeMap[dir]);
+      }
+    });
+    
+    return [treeMap['']];
+  };
+
+  // 复制文件函数
+  const handleCopyFiles = async (targetDir: string) => {
+    if (selectedItems.length === 0) {
+      message.warning('请先选择要复制的文件');
+      return;
+    }
+
+    addConsoleLog(`复制 ${selectedItems.length} 个项目到: ${targetDir || '根目录'}`, 'info');
+
+    try {
+      const response = await axios.post('/workspace/copy', {
+        source_paths: selectedItems,
+        target_dir: targetDir
+      });
+
+      const { copied_items, failed_items } = response.data;
+
+      if (failed_items && failed_items.length > 0) {
+        failed_items.forEach((item: any) => {
+          addConsoleLog(`✗ 复制失败: ${item.path} - ${item.error}`, 'error');
+        });
+      }
+
+      if (copied_items && copied_items.length > 0) {
+        message.success(`成功复制 ${copied_items.length} 个项目`);
+        addConsoleLog(`✓ 成功复制 ${copied_items.length} 个项目`, 'success');
+      }
+
+      setSelectedItems([]);
+      setCopyTargetVisible(false);
+      setCopyTargetDirectory('');
+      loadFiles();
+    } catch (error: any) {
+      const errorMsg = '复制失败: ' + (error.response?.data?.detail || error.message);
+      message.error(errorMsg);
+      addConsoleLog(`✗ ${errorMsg}`, 'error');
+    }
+  };
+
+  const showCopyDialog = async () => {
+    if (selectedItems.length === 0) {
+      message.warning('请先选择要复制的文件');
+      return;
+    }
+    await loadAllDirectories();
+    setCopyTargetDirectory(currentPath);
+    setCopyTargetVisible(true);
+  };
+
+  const showMoveDialog = async () => {
+    if (selectedItems.length === 0) {
+      message.warning('请先选择要移动的文件');
+      return;
+    }
+    await loadAllDirectories();
+    setTargetDirectory(currentPath);
+    setMoveTargetVisible(true);
+  };
+
+  const [allDirectories, setAllDirectories] = useState<string[]>([]);
+  const [loadingDirectories, setLoadingDirectories] = useState(false);
+
+  const loadAllDirectories = async () => {
+    setLoadingDirectories(true);
+    addConsoleLog('开始加载所有目录...', 'info');
+    
+    try {
+      const allDirs: string[] = [];
+      const visited = new Set<string>();
+      
+      // 递归获取所有目录
+      const fetchDirsRecursively = async (path: string = '', depth: number = 0) => {
+        // 防止无限循环
+        if (visited.has(path) || depth > 10) {
+          return;
+        }
+        visited.add(path);
+        
+        try {
+          const response = await axios.get('/workspace/files', {
+            params: { path }
+          });
+          
+          const files = response.data.items || [];
+          const directories = files.filter((f: any) => f.type === 'directory');
+          
+          console.log(`Found ${directories.length} directories in path: "${path}"`);
+          
+          for (const dir of directories) {
+            if (!allDirs.includes(dir.path)) {
+              allDirs.push(dir.path);
+              console.log(`Added directory: ${dir.path}`);
+            }
+            // 递归获取子目录
+            await fetchDirsRecursively(dir.path, depth + 1);
+          }
+        } catch (error) {
+          console.error(`Failed to load directories for path: "${path}"`, error);
+        }
+      };
+      
+      await fetchDirsRecursively('', 0);
+      
+      console.log(`Total directories loaded: ${allDirs.length}`);
+      addConsoleLog(`✓ 已加载 ${allDirs.length} 个目录`, 'success');
+      
+      // 添加根目录并设置
+      setAllDirectories(['', ...allDirs]);
+    } catch (error) {
+      console.error('Failed to load directories:', error);
+      addConsoleLog('✗ 加载目录失败', 'error');
+    } finally {
+      setLoadingDirectories(false);
+    }
+  };
+
+  const getDirectoryList = (): string[] => {
+    const dirs = new Set<string>();
+    
+    // 添加根目录
+    dirs.add('');
+    
+    // 添加父目录
+    if (currentPath) {
+      const parentPath = currentPath.split('/').slice(0, -1).join('/');
+      dirs.add(parentPath);
+    }
+    
+    // 添加所有已知目录
+    allDirectories.forEach(dir => dirs.add(dir));
+    files.filter(f => f.type === 'directory').forEach(f => dirs.add(f.path));
+    
+    // 转换为数组并排序
+    return Array.from(dirs).sort((a, b) => {
+      // 根目录总是第一个
+      if (a === '') return -1;
+      if (b === '') return 1;
+      
+      // 按路径深度和字母顺序排序
+      const aDepth = a.split('/').length;
+      const bDepth = b.split('/').length;
+      if (aDepth !== bDepth) return aDepth - bDepth;
+      return a.localeCompare(b);
+    });
+  };
+  
+  const getDirectoryDisplayName = (dirPath: string): string => {
+    if (dirPath === '') return '📁 根目录 (/)';
+    
+    const depth = dirPath.split('/').length - 1;
+    const indent = '  '.repeat(depth);
+    const folderName = dirPath.split('/').pop() || dirPath;
+    
+    // 标识特殊目录
+    if (dirPath === currentPath) {
+      return `${indent}📂 ${folderName} (当前)`;
+    }
+    
+    if (currentPath && dirPath === currentPath.split('/').slice(0, -1).join('/')) {
+      return `${indent}⬆️ ${folderName || '根目录'} (上级)`;
+    }
+    
+    return `${indent}📁 ${folderName}`;
+  };
+
+
   const downloadConsoleLog = () => {
     const logContent = consoleOutput.join('\n');
     const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
@@ -677,6 +961,36 @@ print("Hello, World!")
                 ))}
               </Breadcrumb>
               
+              {/* 拖拽到上级目录区域 */}
+              {currentPath && selectedItems.length > 0 && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.background = '#e6f7ff';
+                  }}
+                  onDragLeave={(e) => {
+                    e.currentTarget.style.background = '#f5f5f5';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.background = '#f5f5f5';
+                    const parentPath = currentPath.split('/').slice(0, -1).join('/');
+                    handleMoveFiles(parentPath);
+                  }}
+                  style={{
+                    padding: '12px',
+                    background: '#f5f5f5',
+                    border: '2px dashed #d9d9d9',
+                    borderRadius: '4px',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s'
+                  }}
+                >
+                  📁 拖拽到此处移动到上级目录 ({currentPath.split('/').slice(0, -1).join('/') || '根目录'})
+                </div>
+              )}
+              
               {/* 文件搜索框 */}
               <Input.Search
                 placeholder="搜索文件或文件夹..."
@@ -697,14 +1011,30 @@ print("Hello, World!")
                     全选
                   </Checkbox>
                   {selectedItems.length > 0 && (
-                    <Button
-                      danger
-                      size="small"
-                      icon={<DeleteOutlined />}
-                      onClick={handleBatchDelete}
-                    >
-                      删除选中 ({selectedItems.length})
-                    </Button>
+                    <>
+                      <Button
+                        size="small"
+                        icon={<FolderOutlined />}
+                        onClick={showMoveDialog}
+                      >
+                        移动到...
+                      </Button>
+                      <Button
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={showCopyDialog}
+                      >
+                        复制到...
+                      </Button>
+                      <Button
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={handleBatchDelete}
+                      >
+                        删除选中 ({selectedItems.length})
+                      </Button>
+                    </>
                   )}
                 </Space>
               )}
@@ -716,12 +1046,18 @@ print("Hello, World!")
                 renderItem={(item) => (
                   <List.Item
                     key={item.path}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, item.path)}
+                    onDragOver={(e) => handleDragOver(e, item.path, item.type === 'directory')}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, item.path)}
                     style={{
                       padding: '12px',
                       cursor: item.type === 'directory' ? 'pointer' : 'default',
                       borderRadius: '4px',
                       marginBottom: '4px',
-                      background: selectedFile === item.path ? '#e6f7ff' : 'transparent'
+                      background: dragOverItem === item.path ? '#bae7ff' : (selectedFile === item.path ? '#e6f7ff' : 'transparent'),
+                      border: dragOverItem === item.path ? '2px dashed #1890ff' : 'none'
                     }}
                     onMouseEnter={(e) => {
                       if (item.type === 'directory') {
@@ -1181,6 +1517,102 @@ print("Hello, World!")
           }}
         />
       )}
+
+      {/* 移动目标选择对话框 */}
+      <Modal
+        title="选择目标目录"
+        open={moveTargetVisible}
+        onOk={() => handleMoveFiles(targetDirectory)}
+        onCancel={() => {
+          setMoveTargetVisible(false);
+          setTargetDirectory('');
+        }}
+        okText="移动"
+        cancelText="取消"
+        width={600}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>将 {selectedItems.length} 个项目移动到:</div>
+          {currentPath && (
+            <div style={{ fontSize: '12px', color: '#666' }}>
+              当前位置: {currentPath || '根目录'}
+            </div>
+          )}
+          {loadingDirectories && (
+            <div style={{ fontSize: '12px', color: '#1890ff' }}>
+              🔄 正在加载所有目录...
+            </div>
+          )}
+          <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px' }}>
+            <Tree
+              treeData={buildTreeData()}
+              defaultExpandAll
+              selectedKeys={[targetDirectory]}
+              onSelect={(selectedKeys) => {
+                if (selectedKeys.length > 0) {
+                  setTargetDirectory(selectedKeys[0] as string);
+                }
+              }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            或直接输入路径:
+          </div>
+          <Input
+            placeholder="例如: gaoc 或 gaoc/313213"
+            value={targetDirectory}
+            onChange={(e) => setTargetDirectory(e.target.value)}
+          />
+        </Space>
+      </Modal>
+
+      {/* 复制目标选择对话框 */}
+      <Modal
+        title="选择目标目录"
+        open={copyTargetVisible}
+        onOk={() => handleCopyFiles(copyTargetDirectory)}
+        onCancel={() => {
+          setCopyTargetVisible(false);
+          setCopyTargetDirectory('');
+        }}
+        okText="复制"
+        cancelText="取消"
+        width={600}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>将 {selectedItems.length} 个项目复制到:</div>
+          {currentPath && (
+            <div style={{ fontSize: '12px', color: '#666' }}>
+              当前位置: {currentPath || '根目录'}
+            </div>
+          )}
+          {loadingDirectories && (
+            <div style={{ fontSize: '12px', color: '#1890ff' }}>
+              🔄 正在加载所有目录...
+            </div>
+          )}
+          <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px' }}>
+            <Tree
+              treeData={buildTreeData()}
+              defaultExpandAll
+              selectedKeys={[copyTargetDirectory]}
+              onSelect={(selectedKeys) => {
+                if (selectedKeys.length > 0) {
+                  setCopyTargetDirectory(selectedKeys[0] as string);
+                }
+              }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            或直接输入路径:
+          </div>
+          <Input
+            placeholder="例如: gaoc 或 gaoc/313213"
+            value={copyTargetDirectory}
+            onChange={(e) => setCopyTargetDirectory(e.target.value)}
+          />
+        </Space>
+      </Modal>
     </div>
   );
 };

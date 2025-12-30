@@ -284,6 +284,15 @@ const Tasks = () => {
   }
 
   const handleExecute = async (id: number) => {
+    // 查找任务信息
+    const task = tasks.find(t => t.id === id);
+    
+    // 检查任务是否启用
+    if (task && !task.is_active) {
+      message.warning('无法执行，任务是禁用状态');
+      return;
+    }
+    
     try {
       await api.post(`/tasks/${id}/execute`)
       message.success('任务已提交执行')

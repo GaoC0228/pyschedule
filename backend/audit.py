@@ -71,6 +71,8 @@ class AuditAction:
     WORKSPACE_DELETE = "删除文件"
     WORKSPACE_RENAME = "重命名文件"
     WORKSPACE_EXECUTE = "执行脚本"
+    WORKSPACE_MOVE = "移动文件"
+    WORKSPACE_COPY = "复制文件"
     WORKSPACE_READ = "读取文件"
     WORKSPACE_CREATE = "创建文件"
     WORKSPACE_UPDATE = "更新文件"

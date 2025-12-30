@@ -13,7 +13,8 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchData()
-    fetchPublicIp()
+    // 从 localStorage 加载缓存的IP信息
+    loadCachedIpInfo()
   }, [])
 
   const fetchData = async () => {
@@ -36,12 +37,27 @@ const Dashboard = () => {
     }
   }
 
+  // 从 localStorage 加载缓存的IP信息
+  const loadCachedIpInfo = () => {
+    try {
+      const cachedIp = localStorage.getItem('publicIpInfo')
+      if (cachedIp) {
+        setPublicIp(JSON.parse(cachedIp))
+      }
+    } catch (error) {
+      console.error('加载缓存的IP信息失败', error)
+    }
+  }
+
   const fetchPublicIp = async () => {
     setIpLoading(true)
     try {
       const response = await api.get('/system/public-ip')
       if (response.data.success) {
-        setPublicIp(response.data.data)
+        const ipData = response.data.data
+        setPublicIp(ipData)
+        // 保存到 localStorage
+        localStorage.setItem('publicIpInfo', JSON.stringify(ipData))
         message.success('公网IP信息获取成功')
       }
     } catch (error: any) {

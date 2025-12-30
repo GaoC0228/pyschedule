@@ -712,3 +712,220 @@ def create_directory(
     except Exception as e:
         logger.error(f"创建目录失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class MoveRequest(BaseModel):
+    source_paths: List[str]
+    target_dir: str
+
+@router.post("/move")
+def move_files(
+    move_req: MoveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """移动文件或目录（带权限控制）"""
+    source_paths = move_req.source_paths
+    target_dir = move_req.target_dir
+    try:
+        # 检查目标目录权限
+        target_full_path = check_path_permission(current_user, target_dir, require_write=True)
+        
+        if not os.path.exists(target_full_path):
+            raise HTTPException(status_code=404, detail="目标目录不存在")
+        
+        if not os.path.isdir(target_full_path):
+            raise HTTPException(status_code=400, detail="目标路径不是目录")
+        
+        moved_items = []
+        failed_items = []
+        
+        for source_path in source_paths:
+            try:
+                # 检查源文件权限
+                source_full_path = check_path_permission(current_user, source_path, require_write=True)
+                
+                if not os.path.exists(source_full_path):
+                    failed_items.append({"path": source_path, "error": "文件不存在"})
+                    continue
+                
+                # 获取文件/目录名称
+                item_name = os.path.basename(source_full_path)
+                new_full_path = os.path.join(target_full_path, item_name)
+                
+                # 检查目标位置是否已存在同名文件
+                if os.path.exists(new_full_path):
+                    failed_items.append({"path": source_path, "error": "目标位置已存在同名文件"})
+                    continue
+                
+                # 检查是否试图将目录移动到自己的子目录中
+                if os.path.isdir(source_full_path):
+                    try:
+                        rel_path = os.path.relpath(target_full_path, source_full_path)
+                        if not rel_path.startswith('..'):
+                            failed_items.append({"path": source_path, "error": "不能将目录移动到自己的子目录中"})
+                            continue
+                    except ValueError:
+                        # 不同驱动器，允许移动
+                        pass
+                
+                # 执行移动
+                shutil.move(source_full_path, new_full_path)
+                
+                # 计算新的相对路径
+                new_relative_path = os.path.relpath(new_full_path, WORKSPACE_DIR)
+                if new_relative_path == '.':
+                    new_relative_path = item_name
+                
+                moved_items.append({
+                    "source": source_path,
+                    "target": new_relative_path
+                })
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                failed_items.append({"path": source_path, "error": str(e)})
+        
+        # 记录审计日志
+        create_audit_log(
+            db=db,
+            user=current_user,
+            action=AuditAction.WORKSPACE_MOVE,
+            resource_type=ResourceType.FILE,
+            resource_id=0,
+            status="success" if len(failed_items) == 0 else "partial",
+            details={
+                "target_dir": target_dir,
+                "moved_count": len(moved_items),
+                "failed_count": len(failed_items),
+                "moved_items": moved_items,
+                "failed_items": failed_items
+            },
+            ip_address=get_client_ip(request)
+        )
+        
+        logger.info(f"用户 {current_user.username} 移动文件: {len(moved_items)} 成功, {len(failed_items)} 失败")
+        
+        return {
+            "message": f"移动完成: {len(moved_items)} 成功, {len(failed_items)} 失败",
+            "moved_items": moved_items,
+            "failed_items": failed_items
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"移动文件失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/copy")
+def copy_files(
+    move_req: MoveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """复制文件或目录（带权限控制）"""
+    source_paths = move_req.source_paths
+    target_dir = move_req.target_dir
+    
+    try:
+        # 检查目标目录权限
+        target_full_path = check_path_permission(current_user, target_dir, require_write=True)
+        
+        if not os.path.exists(target_full_path):
+            raise HTTPException(status_code=404, detail="目标目录不存在")
+        
+        if not os.path.isdir(target_full_path):
+            raise HTTPException(status_code=400, detail="目标路径不是目录")
+        
+        copied_items = []
+        failed_items = []
+        
+        for source_path in source_paths:
+            try:
+                # 检查源文件权限（读权限即可）
+                source_full_path = check_path_permission(current_user, source_path, require_write=False)
+                
+                if not os.path.exists(source_full_path):
+                    failed_items.append({"path": source_path, "error": "文件不存在"})
+                    continue
+                
+                # 获取文件/目录名称
+                item_name = os.path.basename(source_full_path)
+                new_full_path = os.path.join(target_full_path, item_name)
+                
+                # 如果目标位置已存在，添加后缀
+                if os.path.exists(new_full_path):
+                    base_name = item_name
+                    counter = 1
+                    if os.path.isfile(source_full_path):
+                        # 文件：在扩展名前添加后缀
+                        name_parts = os.path.splitext(item_name)
+                        while os.path.exists(new_full_path):
+                            base_name = f"{name_parts[0]}_副本{counter}{name_parts[1]}"
+                            new_full_path = os.path.join(target_full_path, base_name)
+                            counter += 1
+                    else:
+                        # 目录：在名称后添加后缀
+                        while os.path.exists(new_full_path):
+                            base_name = f"{item_name}_副本{counter}"
+                            new_full_path = os.path.join(target_full_path, base_name)
+                            counter += 1
+                    item_name = base_name
+                
+                # 执行复制
+                if os.path.isdir(source_full_path):
+                    shutil.copytree(source_full_path, new_full_path)
+                else:
+                    shutil.copy2(source_full_path, new_full_path)
+                
+                # 计算新的相对路径
+                new_relative_path = os.path.relpath(new_full_path, WORKSPACE_DIR)
+                if new_relative_path == '.':
+                    new_relative_path = item_name
+                
+                copied_items.append({
+                    "source": source_path,
+                    "target": new_relative_path
+                })
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                failed_items.append({"path": source_path, "error": str(e)})
+        
+        # 记录审计日志
+        create_audit_log(
+            db=db,
+            user=current_user,
+            action=AuditAction.WORKSPACE_COPY,
+            resource_type=ResourceType.FILE,
+            resource_id=0,
+            status="success" if len(failed_items) == 0 else "partial",
+            details={
+                "target_dir": target_dir,
+                "copied_count": len(copied_items),
+                "failed_count": len(failed_items),
+                "copied_items": copied_items,
+                "failed_items": failed_items
+            },
+            ip_address=get_client_ip(request)
+        )
+        
+        logger.info(f"用户 {current_user.username} 复制文件: {len(copied_items)} 成功, {len(failed_items)} 失败")
+        
+        return {
+            "message": f"复制完成: {len(copied_items)} 成功, {len(failed_items)} 失败",
+            "copied_items": copied_items,
+            "failed_items": failed_items
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"复制文件失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
